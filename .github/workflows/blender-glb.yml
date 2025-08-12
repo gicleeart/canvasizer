@@ -1,0 +1,38 @@
+name: Test Blender GLB export
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-glb:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Blender
+        run: brew install --cask blender
+
+      - name: Create Blender script
+        run: |
+          mkdir -p scripts output
+          cat > scripts/export_cube.py << 'PY'
+          import bpy, os
+          bpy.ops.wm.read_factory_settings(use_empty=True)
+          bpy.ops.mesh.primitive_cube_add(size=1.0, location=(0,0,0))
+          os.makedirs("output", exist_ok=True)
+          bpy.ops.export_scene.gltf(
+              filepath="output/model.glb",
+              export_format='GLB',
+              export_apply=True
+          )
+          print("✅ Exported GLB to output/model.glb")
+          PY
+
+      - name: Run Blender headless
+        run: /Applications/Blender.app/Contents/MacOS/Blender -b -noaudio --python scripts/export_cube.py
+
+      - name: Upload GLB artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cube-glb
+          path: output/model.glb
