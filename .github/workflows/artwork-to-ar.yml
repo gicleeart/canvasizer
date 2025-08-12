@@ -110,7 +110,8 @@ jobs:
           GLB_URL="https://raw.githubusercontent.com/${{ github.repository }}/main/public_models/artwork.glb"
           USDZ_URL="https://raw.githubusercontent.com/${{ github.repository }}/main/public_models/artwork.usdz"
 
-          curl -X POST "$WP_WEBHOOK_URL" \
+          echo "POSTing to: $WP_WEBHOOK_URL"
+          curl -v -X POST "$WP_WEBHOOK_URL" \
             -H "Authorization: Bearer $WP_WEBHOOK_TOKEN" \
             -H "Content-Type: application/json" \
             -d @- <<JSON
