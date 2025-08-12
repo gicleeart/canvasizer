@@ -1,20 +1,8 @@
 name: Artwork to AR (GLB + USDZ)
 
 on:
-  workflow_dispatch:
-    inputs:
-      image_url:
-        description: 'Direct URL to the artwork image (JPG/PNG)'
-        required: true
-        type: string
-      width_m:
-        description: 'Physical width in meters'
-        required: true
-        type: string
-      height_m:
-        description: 'Physical height in meters'
-        required: true
-        type: string
+  repository_dispatch:
+    types: [canvasizer_trigger]
 
 jobs:
   build-ar:
@@ -28,15 +16,15 @@ jobs:
       - name: Download artwork
         run: |
           mkdir -p assets scripts output
-          curl -L "${{ github.event.inputs.image_url }}" -o assets/artwork.png
+          curl -L "${{ github.event.client_payload.image_url }}" -o assets/artwork.png
 
       - name: Create Blender script
         run: |
           cat > scripts/make_ar_plane.py << 'PY'
           import bpy, os
 
-          width_m = float("${{ github.event.inputs.width_m }}")
-          height_m = float("${{ github.event.inputs.height_m }}")
+          width_m = float("${{ github.event.client_payload.width_m }}")
+          height_m = float("${{ github.event.client_payload.height_m }}")
           depth_m = 0.03
           img_path = os.path.abspath("assets/artwork.png")
           
