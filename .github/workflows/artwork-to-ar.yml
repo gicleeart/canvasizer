@@ -35,7 +35,7 @@ jobs:
           cube = bpy.context.active_object
           cube.scale = (width_m / 2, depth_m / 2, height_m / 2)
           
-          # Create materials
+          # Materials
           mat_front = bpy.data.materials.new(name="FrontImage")
           mat_front.use_nodes = True
           nt = mat_front.node_tree
@@ -50,16 +50,16 @@ jobs:
           bsdf2.inputs["Base Color"].default_value = (1,1,1,1)
           bsdf2.inputs["Roughness"].default_value = 0.85
           
-          cube.data.materials.append(mat_front)  # slot 0
-          cube.data.materials.append(mat_white)  # slot 1
+          cube.data.materials.append(mat_front)
+          cube.data.materials.append(mat_white)
           
-          # Assign materials by face
+          # Assign materials
           bpy.ops.object.mode_set(mode='OBJECT')
           mesh = cube.data
           for poly in mesh.polygons:
-              poly.material_index = 1  # default to white
+              poly.material_index = 1
           for poly in mesh.polygons:
-              if poly.normal.y > 0.9:  # front face (+Y)
+              if poly.normal.y > 0.9:
                   poly.material_index = 0
           
           # UV unwrap front face
@@ -76,13 +76,10 @@ jobs:
                       v = (co.z + height_m/2) / height_m
                       uv_layer.data[li].uv = (u, v)
           
-          bpy.ops.object.mode_set(mode='OBJECT')
-          
           os.makedirs("output", exist_ok=True)
           bpy.ops.export_scene.gltf(filepath="output/artwork.glb", export_format='GLB', export_apply=True)
           bpy.ops.export_scene.usd(filepath="output/artwork.usdz", export_format='USDZ')
           print("✅ Canvasized with depth: GLB + USDZ exported")
-
           PY
 
       - name: Run Blender headless
@@ -93,3 +90,34 @@ jobs:
         with:
           name: artwork-ar
           path: output/*
+
+      - name: Commit artifacts to repo
+        run: |
+          mkdir -p public_models
+          mv output/artwork.glb public_models/
+          mv output/artwork.usdz public_models/
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add public_models
+          git commit -m "Add AR models for ${{ github.event.client_payload.title }}"
+          git push
+
+      - name: 🔔 POST back to WordPress
+        env:
+          WP_WEBHOOK_URL: ${{ secrets.WP_WEBHOOK_URL }}
+          WP_WEBHOOK_TOKEN: ${{ secrets.WP_WEBHOOK_TOKEN }}
+        run: |
+          GLB_URL="https://raw.githubusercontent.com/${{ github.repository }}/main/public_models/artwork.glb"
+          USDZ_URL="https://raw.githubusercontent.com/${{ github.repository }}/main/public_models/artwork.usdz"
+
+          curl -X POST "$WP_WEBHOOK_URL" \
+            -H "Authorization: Bearer $WP_WEBHOOK_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d @- <<JSON
+          {
+            "title": "${{ github.event.client_payload.title }}",
+            "image_url": "${{ github.event.client_payload.image_url }}",
+            "glb_url": "$GLB_URL",
+            "usdz_url": "$USDZ_URL"
+          }
+          JSON
