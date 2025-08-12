@@ -1,0 +1,104 @@
+name: Artwork to AR (GLB + USDZ) Development
+on:
+  workflow_dispatch:
+    inputs:
+      image_url:
+        description: 'Direct URL to the artwork image (JPG/PNG)'
+        required: true
+        type: string
+      width_m:
+        description: 'Physical width in meters'
+        required: true
+        type: string
+      height_m:
+        description: 'Physical height in meters'
+        required: true
+        type: string
+
+jobs:
+  build-ar:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Blender
+        run: brew install --cask blender
+
+      - name: Download artwork
+        run: |
+          mkdir -p assets scripts output
+          curl -L "${{ github.event.inputs.image_url }}" -o assets/artwork.png
+
+      - name: Create Blender script
+        run: |
+          cat > scripts/make_ar_plane.py << 'PY'
+          import bpy, os
+            width_m = float("${{ github.event.inputs.width_m }}")
+            height_m = float("${{ github.event.inputs.height_m }}")
+            depth_m = 0.03
+            img_path = os.path.abspath("assets/artwork.png")
+            
+            bpy.ops.wm.read_factory_settings(use_empty=True)
+            
+            # Create cube and scale to canvas dimensions
+            bpy.ops.mesh.primitive_cube_add(size=1.0, location=(0,0,0))
+            cube = bpy.context.active_object
+            cube.scale = (width_m / 2, depth_m / 2, height_m / 2)
+            
+            # Create materials
+            mat_front = bpy.data.materials.new(name="FrontImage")
+            mat_front.use_nodes = True
+            nt = mat_front.node_tree
+            bsdf = nt.nodes.get("Principled BSDF")
+            tex = nt.nodes.new("ShaderNodeTexImage")
+            tex.image = bpy.data.images.load(img_path)
+            nt.links.new(tex.outputs["Color"], bsdf.inputs["Base Color"])
+            
+            mat_white = bpy.data.materials.new(name="WhiteSides")
+            mat_white.use_nodes = True
+            bsdf2 = mat_white.node_tree.nodes.get("Principled BSDF")
+            bsdf2.inputs["Base Color"].default_value = (1,1,1,1)
+            bsdf2.inputs["Roughness"].default_value = 0.85
+            
+            cube.data.materials.append(mat_front)  # slot 0
+            cube.data.materials.append(mat_white)  # slot 1
+            
+            # Assign materials by face
+            bpy.ops.object.mode_set(mode='OBJECT')
+            mesh = cube.data
+            for poly in mesh.polygons:
+                poly.material_index = 1  # default to white
+            for poly in mesh.polygons:
+                if poly.normal.y > 0.9:  # front face (+Y)
+                    poly.material_index = 0
+            
+            # UV unwrap front face
+            if not mesh.uv_layers:
+                mesh.uv_layers.new(name="UVMap")
+            uv_layer = mesh.uv_layers.active
+            for loop in uv_layer.data:
+                loop.uv = (0.0, 0.0)
+            for poly in mesh.polygons:
+                if poly.material_index == 0:
+                    for li in poly.loop_indices:
+                        co = mesh.vertices[mesh.loops[li].vertex_index].co
+                        u = (co.x + width_m/2) / width_m
+                        v = (co.z + height_m/2) / height_m
+                        uv_layer.data[li].uv = (u, v)
+            
+            bpy.ops.object.mode_set(mode='OBJECT')
+            
+            os.makedirs("output", exist_ok=True)
+            bpy.ops.export_scene.gltf(filepath="output/artwork.glb", export_format='GLB', export_apply=True)
+            bpy.ops.export_scene.usd(filepath="output/artwork.usdz", export_format='USDZ')
+            print("✅ Canvasized with depth: GLB + USDZ exported")
+          PY
+
+      - name: Run Blender headless
+        run: /Applications/Blender.app/Contents/MacOS/Blender -b -noaudio --python scripts/make_ar_plane.py
+
+      - name: Upload AR artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: artwork-ar
+          path: output/*
