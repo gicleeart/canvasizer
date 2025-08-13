@@ -3,6 +3,8 @@ name: Artwork to AR (GLB + USDZ)
 on:
   repository_dispatch:
     types: [canvasizer_trigger]
+permissions:
+  contents: write
 
 jobs:
   build-ar:
