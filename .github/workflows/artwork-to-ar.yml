@@ -72,7 +72,17 @@ jobs:
           bpy.ops.object.modifier_apply(modifier=mod.name)
           
           mesh = panel.data
+
+          import math
+
+          # Rotate upright: front face faces +Y, bottom edge rests on XZ
+          panel.rotation_euler = (math.radians(-90), 0, 0)  # rotate -90° around X
+          bpy.ops.object.transform_apply(rotation=True)
           
+          # Lift so bottom edge sits on Z=0
+          panel.location.z = height_m / 2.0
+          bpy.ops.object.transform_apply(location=True)
+
           # Ensure a UV layer
           if not mesh.uv_layers:
               mesh.uv_layers.new(name="UVMap")
