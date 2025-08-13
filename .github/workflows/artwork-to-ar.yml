@@ -3,8 +3,9 @@ name: Artwork to AR (GLB + USDZ)
 on:
   repository_dispatch:
     types: [canvasizer_trigger]
+
 permissions:
-  contents: write
+  contents: write  # allow pushes to main
 
 jobs:
   build-ar:
@@ -32,19 +33,31 @@ jobs:
       - name: Create Blender script
         run: |
           cat > scripts/make_ar_plane.py << 'PY'
-          # ... your existing Python script content ...
+          # ... your existing Python script ...
           PY
 
       - name: Run Blender headless
         run: /Applications/Blender.app/Contents/MacOS/Blender -b -noaudio --python scripts/make_ar_plane.py
+
+      # 🔍 Inspect immediately after Blender
+      - name: Inspect post‑Blender output
+        run: |
+          set -euxo pipefail
+          echo "Tree after Blender:"
+          find . -maxdepth 4 -type f
 
       # 📦 Stage and normalize artifacts
       - name: Normalize and stage artifacts
         run: |
           set -euxo pipefail
           mkdir -p public_models
-          shopt -s nullglob
-          for f in output/*.{glb,GLB,usdz,USDZ}; do
+          shopt -s nullglob nocaseglob
+          files=(output/*.{glb,usdz})
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "❌ No 3D model files produced — aborting"
+            exit 1
+          fi
+          for f in "${files[@]}"; do
             base=$(basename "$f"); lower="${base,,}"
             cp -v "$f" "public_models/$lower"
           done
@@ -62,7 +75,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add public_models
           git commit -m "Add AR models for ${{ github.event.client_payload.title }}" || echo "No changes to commit"
-          git push
+          git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
 
       - name: 🔔 POST back to WordPress
         env:
@@ -78,14 +91,13 @@ jobs:
           if [ -f "$GLB_PATH" ]; then
             GLB_URL="https://raw.githubusercontent.com/${{ github.repository }}/main/$GLB_PATH"
           fi
-
           if [ -f "$USDZ_PATH" ]; then
             USDZ_URL="https://raw.githubusercontent.com/${{ github.repository }}/main/$USDZ_PATH"
           fi
 
           echo "POSTing to: $WP_WEBHOOK_URL"
           echo "GLB: $GLB_URL"
-          echo "USDZ: $USDZ_URL (may be empty if not generated)"
+          echo "USDZ: $USDZ_URL"
 
           jq -n \
             --arg post_id  "${{ github.event.client_payload.post_id }}" \
