@@ -79,7 +79,8 @@ jobs:
             exit 1
           fi
           for f in "${files[@]}"; do
-            base=$(basename "$f"); lower="${base,,}"
+            base=$(basename "$f")
+            lower=$(echo "$base" | tr '[:upper:]' '[:lower:]')
             cp -v "$f" "public_models/$lower"
           done
           ls -la public_models
