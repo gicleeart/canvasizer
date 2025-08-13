@@ -33,30 +33,91 @@ jobs:
       - name: Create Blender script
         run: |
           cat > scripts/make_ar_plane.py << 'PY'
-          import bpy, os
+          import bpy, os, math
 
-          # Reset scene
+          # Clean scene
           bpy.ops.wm.read_factory_settings(use_empty=True)
-
-          # Add a cube
-          bpy.ops.mesh.primitive_cube_add(size=1)
-
-          # Ensure output dir exists
-          out_dir = os.path.join(os.getcwd(), "output")
-          os.makedirs(out_dir, exist_ok=True)
-
-          # Export GLB
+          
+          # Config
+          img_path = os.environ.get("ARIP_IMAGE_PATH")  # path to uploaded image
+          out_glb  = os.environ.get("ARIP_OUT_GLB")     # target GLB path
+          width_m  = 0.30   # 30 cm width
+          depth_m  = 0.03   # 3 cm depth
+          
+          # Load image
+          img = bpy.data.images.load(img_path)
+          img.colorspace_settings.name = 'sRGB'
+          
+          # Create a plane matching aspect ratio
+          aspect = img.size[0] / img.size[1] if img.size[1] else 1.0
+          height_m = width_m / aspect
+          
+          bpy.ops.mesh.primitive_plane_add(size=1.0, enter_editmode=False)
+          plane = bpy.context.active_object
+          plane.name = "ArtPanel"
+          
+          # Scale to real-world size
+          plane.scale = (width_m / 2.0, height_m / 2.0, 1.0)  # plane_add size=1 spans -0.5..0.5
+          bpy.ops.object.transform_apply(scale=True)
+          
+          # Add thickness by solidify (better topology than extrude)
+          mod = plane.modifiers.new(name="Solidify", type='SOLIDIFY')
+          mod.thickness = depth_m
+          mod.offset = -1.0  # push back so the front face stays at z=0
+          bpy.ops.object.modifier_apply(modifier=mod.name)
+          
+          # Ensure UVs
+          bpy.ops.object.editmode_toggle()
+          bpy.ops.uv.smart_project(angle_limit=66, island_margin=0.02)
+          bpy.ops.object.editmode_toggle()
+          
+          # Material with image texture
+          mat = bpy.data.materials.new(name="ArtMat")
+          mat.use_nodes = True
+          nt = mat.node_tree
+          bsdf = nt.nodes.get("Principled BSDF")
+          tex = nt.nodes.new("ShaderNodeTexImage")
+          tex.image = img
+          tex.interpolation = 'Smart'
+          nt.links.new(tex.outputs["Color"], bsdf.inputs["Base Color"])
+          bsdf.inputs["Roughness"].default_value = 0.7
+          bsdf.inputs["Metallic"].default_value = 0.0
+          
+          plane.data.materials.append(mat)
+          
+          # Optional: distinct side/back material (neutral)
+          # (Skip if you want same material everywhere)
+          # side_mat = bpy.data.materials.new(name="SideMat"); side_mat.use_nodes = True
+          # assign via material slots + face selection if needed.
+          
+          # Apply transforms
+          bpy.ops.object.transform_apply(location=False, rotation=True, scale=True)
+          
+          # Export GLB with embedded textures
           bpy.ops.export_scene.gltf(
-              filepath=os.path.join(out_dir, "artwork.glb"),
+              filepath=out_glb,
               export_format='GLB',
-              export_apply=True
+              export_image_format='AUTO',
+              export_yup=True,
+              export_apply=True,
+              export_texcoords=True,
+              export_normals=True,
+              export_materials='EXPORT',
+              use_selection=False
           )
-  
-          # Export USDZ (requires Blender USD export support)
+          
+          # After the GLB export section
+          out_usdz = os.environ.get("ARIP_OUT_USDZ")  # target USDZ path
+          
           bpy.ops.wm.usd_export(
-              filepath=os.path.join(out_dir, "artwork.usdz")
+              filepath=out_usdz,
+              export_format='USDZ',
+              export_materials=True,
+              export_textures=True,
+              selected_objects_only=False
           )
           PY
+
       - name: Run Blender headless
         run: /Applications/Blender.app/Contents/MacOS/Blender -b -noaudio --python scripts/make_ar_plane.py
 
