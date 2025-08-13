@@ -62,19 +62,40 @@ jobs:
           git commit -m "Add AR models for ${{ github.event.client_payload.title }}" || echo "No changes to commit"
           git push
 
-      - name: 🔔 POST back to WordPress
+            - name: 🔔 POST back to WordPress
         env:
           WP_WEBHOOK_URL: ${{ secrets.WP_WEBHOOK_URL }}
           WP_WEBHOOK_TOKEN: ${{ secrets.WP_WEBHOOK_TOKEN }}
         run: |
-          GLB_URL="https://raw.githubusercontent.com/${{ github.repository }}/main/public_models/artwork.glb"
-          USDZ_URL="https://raw.githubusercontent.com/${{ github.repository }}/main/public_models/artwork.usdz"
+          GLB_PATH="public_models/artwork.glb"
+          USDZ_PATH="public_models/artwork.usdz"
+
+          GLB_URL=""
+          USDZ_URL=""
+
+          if [ -f "$GLB_PATH" ]; then
+            GLB_URL="https://raw.githubusercontent.com/${{ github.repository }}/main/$GLB_PATH"
+          fi
+
+          if [ -f "$USDZ_PATH" ]; then
+            USDZ_URL="https://raw.githubusercontent.com/${{ github.repository }}/main/$USDZ_PATH"
+          fi
 
           echo "POSTing to: $WP_WEBHOOK_URL"
-          curl -v -X POST "$WP_WEBHOOK_URL" \
-            -H "Authorization: Bearer $WP_WEBHOOK_TOKEN" \
-            -H "Content-Type: application/json" \
-            -d @- <<JSON
+          echo "GLB: $GLB_URL"
+          echo "USDZ: $USDZ_URL (may be empty if not generated)"
+
+          jq -n \
+            --arg post_id  "${{ github.event.client_payload.post_id }}" \
+            --arg title    "${{ github.event.client_payload.title }}" \
+            --arg image    "${{ github.event.client_payload.image_url }}" \
+            --arg glb      "$GLB_URL" \
+            --arg usdz     "$USDZ_URL" \
+            '{post_id:$post_id, title:$title, image_url:$image, glb_url:$glb, usdz_url:$usdz}' \
+          | curl -v -X POST "$WP_WEBHOOK_URL" \
+              -H "Authorization: Bearer $WP_WEBHOOK_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d @-
           {
             "post_id": "${{ github.event.client_payload.post_id }}",
             "title": "${{ github.event.client_payload.title }}",
