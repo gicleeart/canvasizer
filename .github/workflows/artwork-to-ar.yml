@@ -47,7 +47,7 @@ jobs:
           bpy.ops.wm.read_factory_settings(use_empty=True)
           
           # Panel dimensions
-          width_m = 0.30     # 30 cm wide
+          width_m = 1.00     # 30 cm wide
           depth_m = 0.01     # 3 cm thick
           
           # Load image and compute aspect
