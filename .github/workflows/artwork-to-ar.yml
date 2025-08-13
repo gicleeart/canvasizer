@@ -18,88 +18,48 @@ jobs:
           mkdir -p assets scripts output
           curl -L "${{ github.event.client_payload.image_url }}" -o assets/artwork.png
 
+      # 🪪 Preflight: check environment and inputs
+      - name: Preflight debug
+        run: |
+          set -euxo pipefail
+          pwd
+          ls -la
+          echo "Tree before conversion:"
+          find . -maxdepth 3 -type f
+
       - name: Create Blender script
         run: |
           cat > scripts/make_ar_plane.py << 'PY'
-          import bpy, os
-
-          width_m = float("${{ github.event.client_payload.width_m }}")
-          height_m = float("${{ github.event.client_payload.height_m }}")
-          depth_m = 0.03
-          img_path = os.path.abspath("assets/artwork.png")
-          
-          bpy.ops.wm.read_factory_settings(use_empty=True)
-          
-          # Create cube and scale to canvas dimensions
-          bpy.ops.mesh.primitive_cube_add(size=1.0, location=(0,0,0))
-          cube = bpy.context.active_object
-          cube.scale = (width_m / 2, depth_m / 2, height_m / 2)
-          
-          # Materials
-          mat_front = bpy.data.materials.new(name="FrontImage")
-          mat_front.use_nodes = True
-          nt = mat_front.node_tree
-          bsdf = nt.nodes.get("Principled BSDF")
-          tex = nt.nodes.new("ShaderNodeTexImage")
-          tex.image = bpy.data.images.load(img_path)
-          nt.links.new(tex.outputs["Color"], bsdf.inputs["Base Color"])
-          
-          mat_white = bpy.data.materials.new(name="WhiteSides")
-          mat_white.use_nodes = True
-          bsdf2 = mat_white.node_tree.nodes.get("Principled BSDF")
-          bsdf2.inputs["Base Color"].default_value = (1,1,1,1)
-          bsdf2.inputs["Roughness"].default_value = 0.85
-          
-          cube.data.materials.append(mat_front)
-          cube.data.materials.append(mat_white)
-          
-          # Assign materials
-          bpy.ops.object.mode_set(mode='OBJECT')
-          mesh = cube.data
-          for poly in mesh.polygons:
-              poly.material_index = 1
-          for poly in mesh.polygons:
-              if poly.normal.y > 0.9:
-                  poly.material_index = 0
-          
-          # UV unwrap front face
-          if not mesh.uv_layers:
-              mesh.uv_layers.new(name="UVMap")
-          uv_layer = mesh.uv_layers.active
-          for loop in uv_layer.data:
-              loop.uv = (0.0, 0.0)
-          for poly in mesh.polygons:
-              if poly.material_index == 0:
-                  for li in poly.loop_indices:
-                      co = mesh.vertices[mesh.loops[li].vertex_index].co
-                      u = (co.x + width_m/2) / width_m
-                      v = (co.z + height_m/2) / height_m
-                      uv_layer.data[li].uv = (u, v)
-          
-          os.makedirs("output", exist_ok=True)
-          bpy.ops.export_scene.gltf(filepath="output/artwork.glb", export_format='GLB', export_apply=True)
-          bpy.ops.export_scene.usd(filepath="output/artwork.usdz", export_format='USDZ')
-          print("✅ Canvasized with depth: GLB + USDZ exported")
+          ... your existing Python script ...
           PY
 
       - name: Run Blender headless
         run: /Applications/Blender.app/Contents/MacOS/Blender -b -noaudio --python scripts/make_ar_plane.py
 
+      # 📦 Stage and normalize artifacts
+      - name: Normalize and stage artifacts
+        run: |
+          set -euxo pipefail
+          mkdir -p public_models
+          shopt -s nullglob
+          for f in output/*.{glb,GLB,usdz,USDZ}; do
+            base=$(basename "$f"); lower="${base,,}"
+            cp -v "$f" "public_models/$lower"
+          done
+          ls -la public_models
+
       - name: Upload AR artifacts
         uses: actions/upload-artifact@v4
         with:
           name: artwork-ar
-          path: output/*
+          path: public_models/*
 
       - name: Commit artifacts to repo
         run: |
-          mkdir -p public_models
-          mv output/artwork.glb public_models/
-          mv output/artwork.usdz public_models/
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add public_models
-          git commit -m "Add AR models for ${{ github.event.client_payload.title }}"
+          git commit -m "Add AR models for ${{ github.event.client_payload.title }}" || echo "No changes to commit"
           git push
 
       - name: 🔔 POST back to WordPress
