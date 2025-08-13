@@ -30,33 +30,33 @@ jobs:
           echo "Tree before conversion:"
           find . -maxdepth 3 -type f
 
-        - name: Create Blender script
-          run: |
-            cat > scripts/make_ar_plane.py << 'PY'
-            import bpy, os
+      - name: Create Blender script
+        run: |
+          cat > scripts/make_ar_plane.py << 'PY'
+          import bpy, os
+
+          # Reset scene
+          bpy.ops.wm.read_factory_settings(use_empty=True)
+
+          # Add a cube
+          bpy.ops.mesh.primitive_cube_add(size=1)
+
+          # Ensure output dir exists
+          out_dir = os.path.join(os.getcwd(), "output")
+          os.makedirs(out_dir, exist_ok=True)
+
+          # Export GLB
+          bpy.ops.export_scene.gltf(
+              filepath=os.path.join(out_dir, "artwork.glb"),
+              export_format='GLB',
+              export_apply=True
+          )
   
-            # Reset scene
-            bpy.ops.wm.read_factory_settings(use_empty=True)
-  
-            # Add a cube
-            bpy.ops.mesh.primitive_cube_add(size=1)
-  
-            # Ensure output dir exists
-            out_dir = os.path.join(os.getcwd(), "output")
-            os.makedirs(out_dir, exist_ok=True)
-  
-            # Export GLB
-            bpy.ops.export_scene.gltf(
-                filepath=os.path.join(out_dir, "artwork.glb"),
-                export_format='GLB',
-                export_apply=True
-            )
-  
-            # Export USDZ (requires Blender USD export support)
-            bpy.ops.wm.usd_export(
-                filepath=os.path.join(out_dir, "artwork.usdz")
-            )
-            PY
+          # Export USDZ (requires Blender USD export support)
+          bpy.ops.wm.usd_export(
+              filepath=os.path.join(out_dir, "artwork.usdz")
+          )
+          PY
       - name: Run Blender headless
         run: /Applications/Blender.app/Contents/MacOS/Blender -b -noaudio --python scripts/make_ar_plane.py
 
