@@ -30,7 +30,7 @@ jobs:
       - name: Create Blender script
         run: |
           cat > scripts/make_ar_plane.py << 'PY'
-          ... your existing Python script ...
+          # ... your existing Python script content ...
           PY
 
       - name: Run Blender headless
