@@ -147,7 +147,7 @@ jobs:
           git commit -m "Add AR models for ${{ github.event.client_payload.title }}" || echo "No changes to commit"
           git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
 
-      - name: POST back to WordPress
+      - name: POST back to WordPress (after HEAD check)
         env:
           WP_WEBHOOK_URL: ${{ secrets.WP_WEBHOOK_URL }}
           WP_WEBHOOK_TOKEN: ${{ secrets.WP_WEBHOOK_TOKEN }}
@@ -165,9 +165,34 @@ jobs:
             USDZ_URL="https://raw.githubusercontent.com/${{ github.repository }}/main/$USDZ_PATH"
           fi
 
-          echo "POSTing to: $WP_WEBHOOK_URL"
+          echo "Will POST with:"
           echo "GLB: $GLB_URL"
           echo "USDZ: $USDZ_URL"
+
+          # Wait until at least the GLB is live on GitHub's raw CDN
+          # Max 30s, check every 3s
+          for i in {1..10}; do
+            if curl -s -I "$GLB_URL" | grep -q "200 OK"; then
+              echo "✅ GLB is live"
+              break
+            fi
+            echo "⏳ Waiting for GLB to propagate..."
+            sleep 3
+          done
+
+          # Optional: also wait for USDZ if present
+          if [ -n "$USDZ_URL" ]; then
+            for i in {1..10}; do
+              if curl -s -I "$USDZ_URL" | grep -q "200 OK"; then
+                echo "✅ USDZ is live"
+                break
+              fi
+              echo "⏳ Waiting for USDZ to propagate..."
+              sleep 3
+            done
+          fi
+
+          echo "POSTing to: $WP_WEBHOOK_URL"
 
           jq -n \
             --arg post_id  "${{ github.event.client_payload.post_id }}" \
