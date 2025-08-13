@@ -21,7 +21,6 @@ jobs:
           mkdir -p assets scripts output
           curl -L "${{ github.event.client_payload.image_url }}" -o assets/artwork.png
 
-      # 🪪 Preflight: check environment and inputs
       - name: Preflight debug
         run: |
           set -euxo pipefail
@@ -34,44 +33,41 @@ jobs:
         run: |
           cat > scripts/make_ar_plane.py << 'PY'
           import bpy, os, math
+          os.makedirs(os.path.dirname(os.environ["ARIP_OUT_GLB"]), exist_ok=True)
+          os.makedirs(os.path.dirname(os.environ["ARIP_OUT_USDZ"]), exist_ok=True)
 
           # Clean scene
           bpy.ops.wm.read_factory_settings(use_empty=True)
-          
-          # Config
-          img_path = os.environ.get("ARIP_IMAGE_PATH")  # path to uploaded image
-          out_glb  = os.environ.get("ARIP_OUT_GLB")     # target GLB path
-          width_m  = 0.30   # 30 cm width
-          depth_m  = 0.03   # 3 cm depth
-          
-          # Load image
+
+          img_path = os.environ.get("ARIP_IMAGE_PATH")
+          out_glb  = os.environ.get("ARIP_OUT_GLB")
+          out_usdz = os.environ.get("ARIP_OUT_USDZ")
+
+          width_m  = 0.30
+          depth_m  = 0.03
+
           img = bpy.data.images.load(img_path)
           img.colorspace_settings.name = 'sRGB'
-          
-          # Create a plane matching aspect ratio
+
           aspect = img.size[0] / img.size[1] if img.size[1] else 1.0
           height_m = width_m / aspect
-          
+
           bpy.ops.mesh.primitive_plane_add(size=1.0, enter_editmode=False)
           plane = bpy.context.active_object
           plane.name = "ArtPanel"
-          
-          # Scale to real-world size
-          plane.scale = (width_m / 2.0, height_m / 2.0, 1.0)  # plane_add size=1 spans -0.5..0.5
+
+          plane.scale = (width_m / 2.0, height_m / 2.0, 1.0)
           bpy.ops.object.transform_apply(scale=True)
-          
-          # Add thickness by solidify (better topology than extrude)
+
           mod = plane.modifiers.new(name="Solidify", type='SOLIDIFY')
           mod.thickness = depth_m
-          mod.offset = -1.0  # push back so the front face stays at z=0
+          mod.offset = -1.0
           bpy.ops.object.modifier_apply(modifier=mod.name)
-          
-          # Ensure UVs
+
           bpy.ops.object.editmode_toggle()
           bpy.ops.uv.smart_project(angle_limit=66, island_margin=0.02)
           bpy.ops.object.editmode_toggle()
-          
-          # Material with image texture
+
           mat = bpy.data.materials.new(name="ArtMat")
           mat.use_nodes = True
           nt = mat.node_tree
@@ -82,18 +78,10 @@ jobs:
           nt.links.new(tex.outputs["Color"], bsdf.inputs["Base Color"])
           bsdf.inputs["Roughness"].default_value = 0.7
           bsdf.inputs["Metallic"].default_value = 0.0
-          
           plane.data.materials.append(mat)
-          
-          # Optional: distinct side/back material (neutral)
-          # (Skip if you want same material everywhere)
-          # side_mat = bpy.data.materials.new(name="SideMat"); side_mat.use_nodes = True
-          # assign via material slots + face selection if needed.
-          
-          # Apply transforms
+
           bpy.ops.object.transform_apply(location=False, rotation=True, scale=True)
-          
-          # Export GLB with embedded textures
+
           bpy.ops.export_scene.gltf(
               filepath=out_glb,
               export_format='GLB',
@@ -105,10 +93,7 @@ jobs:
               export_materials='EXPORT',
               use_selection=False
           )
-          
-          # After the GLB export section
-          out_usdz = os.environ.get("ARIP_OUT_USDZ")  # target USDZ path
-          
+
           bpy.ops.wm.usd_export(
               filepath=out_usdz,
               export_format='USDZ',
@@ -119,16 +104,18 @@ jobs:
           PY
 
       - name: Run Blender headless
+        env:
+          ARIP_IMAGE_PATH: ${{ github.workspace }}/assets/artwork.png
+          ARIP_OUT_GLB:   ${{ github.workspace }}/output/artwork.glb
+          ARIP_OUT_USDZ:  ${{ github.workspace }}/output/artwork.usdz
         run: /Applications/Blender.app/Contents/MacOS/Blender -b -noaudio --python scripts/make_ar_plane.py
 
-      # 🔍 Inspect immediately after Blender
       - name: Inspect post‑Blender output
         run: |
           set -euxo pipefail
           echo "Tree after Blender:"
           find . -maxdepth 4 -type f
 
-      # 📦 Stage and normalize artifacts
       - name: Normalize and stage artifacts
         run: |
           set -euxo pipefail
@@ -160,7 +147,7 @@ jobs:
           git commit -m "Add AR models for ${{ github.event.client_payload.title }}" || echo "No changes to commit"
           git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
 
-      - name: 🔔 POST back to WordPress
+      - name: POST back to WordPress
         env:
           WP_WEBHOOK_URL: ${{ secrets.WP_WEBHOOK_URL }}
           WP_WEBHOOK_TOKEN: ${{ secrets.WP_WEBHOOK_TOKEN }}
