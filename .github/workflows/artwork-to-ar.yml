@@ -62,7 +62,7 @@ jobs:
           git commit -m "Add AR models for ${{ github.event.client_payload.title }}" || echo "No changes to commit"
           git push
 
-            - name: 🔔 POST back to WordPress
+      - name: 🔔 POST back to WordPress
         env:
           WP_WEBHOOK_URL: ${{ secrets.WP_WEBHOOK_URL }}
           WP_WEBHOOK_TOKEN: ${{ secrets.WP_WEBHOOK_TOKEN }}
@@ -96,11 +96,3 @@ jobs:
               -H "Authorization: Bearer $WP_WEBHOOK_TOKEN" \
               -H "Content-Type: application/json" \
               -d @-
-          {
-            "post_id": "${{ github.event.client_payload.post_id }}",
-            "title": "${{ github.event.client_payload.title }}",
-            "image_url": "${{ github.event.client_payload.image_url }}",
-            "glb_url": "$GLB_URL",
-            "usdz_url": "$USDZ_URL"
-          }
-          JSON
