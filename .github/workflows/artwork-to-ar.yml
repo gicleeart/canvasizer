@@ -116,26 +116,25 @@ jobs:
           for poly in mesh.polygons:
               poly.material_index = 1
           
-          # Pick the front face (largest +Z quad)
-          candidates = [p for p in mesh.polygons if p.normal.z > 0.5]
-          front_face = max(candidates, key=lambda p: p.area) if candidates else max(mesh.polygons, key=lambda p: p.center.z)
-          front_face.material_index = 0
+          # Pick the front face (now facing +Y after rotation)
+          candidates = [p for p in mesh.polygons if p.normal.y > 0.99]
+          front_face = max(candidates, key=lambda p: p.area) if candidates else max(mesh.polygons, key=lambda p: p.center.y)
           
           # Planar UVs for the front face: fill 0..1 using local X/Y extents
-          xs, ys = [], []
+          xs, zs = [], []
           for li in front_face.loop_indices:
               v = mesh.vertices[mesh.loops[li].vertex_index]
-              xs.append(v.co.x); ys.append(v.co.y)
+              xs.append(v.co.x); zs.append(v.co.z)
           min_x, max_x = min(xs), max(xs)
-          min_y, max_y = min(ys), max(ys)
+          min_z, max_z = min(zs), max(zs)
           dx = (max_x - min_x) or 1.0
-          dy = (max_y - min_y) or 1.0
+          dz = (max_z - min_z) or 1.0
           
           for li in front_face.loop_indices:
               v = mesh.vertices[mesh.loops[li].vertex_index]
               uv = uv_layer.data[li].uv
               uv.x = (v.co.x - min_x) / dx
-              uv.y = (v.co.y - min_y) / dy
+              uv.y = (v.co.z - min_z) / dz
           
           # Export GLB (embedded textures)
           bpy.ops.export_scene.gltf(
