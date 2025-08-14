@@ -53,8 +53,18 @@ jobs:
           # Load image and compute aspect
           img = bpy.data.images.load(img_path)
           img.colorspace_settings.name = "sRGB"
-          aspect = (img.size[0] / img.size[1]) if img.size[1] else 1.0
-          height_m = width_m / aspect
+          img_w, img_h = img.size
+          aspect = img_w / img_h if img_h else 1.0
+          
+          # Decide orientation
+          if aspect >= 1.0:
+              # Landscape: width fixed, compute height
+              width_m = 1.50
+              height_m = width_m / aspect
+          else:
+              # Portrait: height fixed, compute width
+              height_m = 1.50
+              width_m = height_m * aspect
           
           # Create front plane at origin
           bpy.ops.mesh.primitive_plane_add(size=1.0, enter_editmode=False, location=(0, 0, 3.0))
