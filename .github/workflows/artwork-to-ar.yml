@@ -113,9 +113,22 @@ jobs:
               poly.material_index = 1
           
           # Pick the front face (largest +Y quad)
+          import mathutils
+
+          # Find the "front" face (as before)
           candidates = [p for p in mesh.polygons if p.normal.y > 0.5]
           front_face = max(candidates, key=lambda p: p.area) if candidates else max(mesh.polygons, key=lambda p: p.center.y)
-          front_face.material_index = 0
+          
+          # Find the *opposite* face whose normal is ~180° from the front's
+          opposite_face = None
+          for p in mesh.polygons:
+              if p != front_face and p.normal.dot(front_face.normal) < -0.9999:
+                  opposite_face = p
+                  break
+          
+          # If found, use that as the artwork face; otherwise fall back to front_face
+          target_face = opposite_face if opposite_face else front_face
+          target_face.material_index = 0
           
           # Planar UVs for the front face: fill 0..1 using local X/Y extents
           def rotate_texture_180(mesh, face, uv_layer):
@@ -142,12 +155,6 @@ jobs:
                   v_ = (v.co.y - min_y) / dy
                   uv.x = 1.0 - u
                   uv.y = 1.0 - v_
-
-          import math
-
-          # Spin 180° around Z so the bottom edge flips to opposite side
-          panel.rotation_euler[2] += math.radians(180)
-          bpy.ops.object.transform_apply(rotation=True)
           
           # Export GLB (embedded textures)
           bpy.ops.export_scene.gltf(
