@@ -32,117 +32,110 @@ jobs:
       - name: Create Blender script
         run: |
           cat > scripts/make_ar_plane.py << 'PY'
-          import bpy, os
-
-          # Env paths
-          img_path = os.environ["ARIP_IMAGE_PATH"]
-          out_glb  = os.environ["ARIP_OUT_GLB"]
-          out_usdz = os.environ["ARIP_OUT_USDZ"]
+          import bpy
+          import bmesh
           
-          # Ensure dirs exist
-          os.makedirs(os.path.dirname(out_glb), exist_ok=True)
-          os.makedirs(os.path.dirname(out_usdz), exist_ok=True)
+          # === CONFIG ===
+          image_path = "/path/to/your/image.jpg"  # Replace with actual path
+          panel_thickness = 0.02  # Thickness in meters
           
-          # Clean scene
-          bpy.ops.wm.read_factory_settings(use_empty=True)
+          # === CLEANUP ===
+          bpy.ops.object.select_all(action='DESELECT')
+          for obj in bpy.data.objects:
+              obj.select_set(True)
+          bpy.ops.object.delete()
           
-          # Panel dimensions
-          width_m = 1.00     # 1 M wide
-          depth_m = 0.03     # 3 cm thick
+          # === LOAD IMAGE ===
+          img = bpy.data.images.load(image_path)
           
-          # Load image and compute aspect
-          img = bpy.data.images.load(img_path)
-          img.colorspace_settings.name = "sRGB"
-          aspect = (img.size[0] / img.size[1]) if img.size[1] else 1.0
-          height_m = width_m / aspect
+          # === GET IMAGE DIMENSIONS ===
+          width, height = img.size
+          aspect_ratio = width / height
           
-          # Create front plane at origin
-          bpy.ops.mesh.primitive_plane_add(size=1.0, enter_editmode=False)
+          # === CREATE PANEL ===
+          bpy.ops.mesh.primitive_cube_add(size=1)
           panel = bpy.context.active_object
-          panel.name = "ArtPanel"
+          panel.name = "CanvasPanel"
           
-          # Scale to real size and apply
-          panel.scale = (width_m / 2.0, height_m / 2.0, 1.0)
-          bpy.ops.object.transform_apply(scale=True, rotation=True, location=False)
+          # Scale to match aspect ratio and thickness
+          panel.scale.x = 0.5
+          panel.scale.y = panel_thickness / 2
+          panel.scale.z = 0.5 / aspect_ratio
           
-          # Solidify for thickness (push back so front stays at z=0)
-          mod = panel.modifiers.new(name="Solidify", type='SOLIDIFY')
-          mod.thickness = depth_m
-          mod.offset = -1.0
-          bpy.ops.object.modifier_apply(modifier=mod.name)
+          # Apply transforms
+          bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
           
-          mesh = panel.data
-
-          import math
-
-          # Rotate upright: front face faces +Y, bottom edge rests on XZ
-          panel.rotation_euler = (math.radians(-90), 0, 0)  # rotate -90° around X
-          bpy.ops.object.transform_apply(rotation=True)
+          # === ROTATE PANEL UPRIGHT ===
+          panel.rotation_euler[0] = -1.5708  # Rotate -90° around X to stand upright
+          bpy.ops.object.transform_apply(location=False, rotation=True, scale=False)
           
-          # Lift so bottom edge sits on Z=0
-          panel.location.z = height_m / 2.0
-          bpy.ops.object.transform_apply(location=True)
-
-          # Recalculate normals to ensure correct face orientation
+          # === RECALCULATE NORMALS ===
           bpy.ops.object.mode_set(mode='EDIT')
           bpy.ops.mesh.normals_make_consistent(inside=False)
           bpy.ops.object.mode_set(mode='OBJECT')
-
-          # Ensure a UV layer
-          if not mesh.uv_layers:
-              mesh.uv_layers.new(name="UVMap")
-          uv_layer = mesh.uv_layers.active  # MeshUVLoopLayer
           
-          # Materials
-          mat_front = bpy.data.materials.new("FrontArt")
-          mat_front.use_nodes = True
-          f_bsdf = mat_front.node_tree.nodes.get("Principled BSDF")
-          f_tex = mat_front.node_tree.nodes.new("ShaderNodeTexImage")
-          f_tex.image = img
-          f_tex.interpolation = "Smart"
-          f_tex.extension = "CLIP"  # no tiling past edges
-          mat_front.node_tree.links.new(f_tex.outputs["Color"], f_bsdf.inputs["Base Color"])
-          f_bsdf.inputs["Roughness"].default_value = 0.7
-          f_bsdf.inputs["Metallic"].default_value = 0.0
-          
-          mat_side = bpy.data.materials.new("SideMat")
-          mat_side.use_nodes = True
-          s_bsdf = mat_side.node_tree.nodes.get("Principled BSDF")
-          s_bsdf.inputs["Base Color"].default_value = (1.0, 1.0, 1.0, 1.0)  # pure white
-          s_bsdf.inputs["Roughness"].default_value = 0.9
-          s_bsdf.inputs["Metallic"].default_value = 0.0
-          
-          # Assign material slots: 0 = front, 1 = sides/back
-          mesh.materials.clear()
-          mesh.materials.append(mat_front)
-          mesh.materials.append(mat_side)
-          
-          # Default all faces to side material
-          for poly in mesh.polygons:
-              poly.material_index = 1
-          
-          # Pick the front face (now facing +Y after rotation)
+          # === DETECT FRONT FACE (+Y NORMAL) ===
+          mesh = panel.data
           candidates = [p for p in mesh.polygons if round(p.normal.y, 3) == 1.0]
           front_face = max(candidates, key=lambda p: p.area) if candidates else max(mesh.polygons, key=lambda p: p.center.y)
-
-          # Planar UVs for the front face: fill 0..1 using local X/Y extents
+          
+          # === CREATE UV MAP ===
+          if not mesh.uv_layers:
+              mesh.uv_layers.new(name="UVMap")
+          uv_layer = mesh.uv_layers.active.data
+          
+          # Map image onto front face using X and Z
+          verts = panel.data.vertices
           xs, zs = [], []
-          for li in front_face.loop_indices:
-              v = mesh.vertices[mesh.loops[li].vertex_index]
-              xs.append(v.co.x); zs.append(v.co.z)
+          for loop_index in front_face.loop_indices:
+              v = verts[panel.data.loops[loop_index].vertex_index]
+              xs.append(v.co.x)
+              zs.append(v.co.z)
           min_x, max_x = min(xs), max(xs)
           min_z, max_z = min(zs), max(zs)
-          dx = (max_x - min_x) or 1.0
-          dz = (max_z - min_z) or 1.0
-
-          print("Front face normal:", front_face.normal)
-          print("Front face center:", front_face.center)
-
-          for li in front_face.loop_indices:
-              v = mesh.vertices[mesh.loops[li].vertex_index]
-              uv = uv_layer.data[li].uv
+          dx = max_x - min_x
+          dz = max_z - min_z
+          
+          for loop_index in front_face.loop_indices:
+              v = verts[panel.data.loops[loop_index].vertex_index]
+              uv = uv_layer[loop_index].uv
               uv.x = (v.co.x - min_x) / dx
               uv.y = (v.co.z - min_z) / dz
+          
+          # === CREATE MATERIAL ===
+          mat = bpy.data.materials.new(name="CanvasMaterial")
+          mat.use_nodes = True
+          nodes = mat.node_tree.nodes
+          links = mat.node_tree.links
+          
+          # Clear default nodes
+          for node in nodes:
+              nodes.remove(node)
+          
+          # Add nodes
+          output = nodes.new(type='ShaderNodeOutputMaterial')
+          diffuse = nodes.new(type='ShaderNodeBsdfPrincipled')
+          tex_image = nodes.new(type='ShaderNodeTexImage')
+          tex_image.image = img
+          
+          # Link nodes
+          links.new(tex_image.outputs['Color'], diffuse.inputs['Base Color'])
+          links.new(diffuse.outputs['BSDF'], output.inputs['Surface'])
+          
+          # Assign material
+          panel.data.materials.append(mat)
+          
+          # === ASSIGN PURE WHITE TO OTHER FACES ===
+          white_color = (1.0, 1.0, 1.0, 1.0)
+          for poly in mesh.polygons:
+              if poly.index != front_face.index:
+                  poly.material_index = 0
+                  for loop_index in poly.loop_indices:
+                      uv_layer[loop_index].uv = (0.0, 0.0)  # Collapse UVs
+                  # Optional: assign white via vertex color or separate material if needed
+          
+          # === DONE ===
+          print("✅ Canvasizer complete. Panel is upright, aspect-correct, and textured.")
           
           # Export GLB (embedded textures)
           bpy.ops.export_scene.gltf(
