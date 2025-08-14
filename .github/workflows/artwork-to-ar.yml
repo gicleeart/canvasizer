@@ -70,11 +70,6 @@ jobs:
           bpy.ops.mesh.primitive_plane_add(size=1.0, enter_editmode=False, location=(0, 0, 3.0))
           panel = bpy.context.active_object
           panel.name = "ArtPanel"
-         
-          # Tilt upright: rotate +90° around X so face points +Y
-          import math
-          panel.rotation_euler[0] = math.radians(90)
-          bpy.ops.object.transform_apply(rotation=True)
           
           # Solidify for thickness (push back so front stays at z=0)
           mod = panel.modifiers.new(name="Solidify", type='SOLIDIFY')
