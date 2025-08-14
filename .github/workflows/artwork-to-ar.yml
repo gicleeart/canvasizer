@@ -47,8 +47,8 @@ jobs:
           bpy.ops.wm.read_factory_settings(use_empty=True)
           
           # Panel dimensions
-          width_m = 1.00     # 1 M wide
-          depth_m = 0.01     # 1 cm thick
+          width_m = 1.50     # 1.5 M wide
+          depth_m = 0.02     # 2 cm thick
           
           # Load image and compute aspect
           img = bpy.data.images.load(img_path)
@@ -57,7 +57,7 @@ jobs:
           height_m = width_m / aspect
           
           # Create front plane at origin
-          bpy.ops.mesh.primitive_plane_add(size=1.0, enter_editmode=False, location=(0, 0, 1.0))
+          bpy.ops.mesh.primitive_plane_add(size=1.0, enter_editmode=False, location=(0, 0, 3.0))
           panel = bpy.context.active_object
           panel.name = "ArtPanel"
          
