@@ -140,7 +140,7 @@ jobs:
                   uv = uv_layer.data[li].uv
                   u = (v.co.x - min_x) / dx
                   v_ = (v.co.y - min_y) / dy
-                  uv.x = u
+                  uv.x = 1.0 - u
                   uv.y = 1.0 - v_
           
           # Export GLB (embedded textures)
