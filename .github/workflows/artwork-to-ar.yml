@@ -32,9 +32,9 @@ jobs:
       - name: Create Blender script
         run: |
           cat > scripts/make_ar_plane.py << 'PY'
-          import bpy, os, bmesh
+          import bpy, os
 
-          # === Env paths ===
+          # Env paths
           img_path = os.environ["ARIP_IMAGE_PATH"]
           out_glb  = os.environ["ARIP_OUT_GLB"]
           out_usdz = os.environ["ARIP_OUT_USDZ"]
@@ -46,8 +46,8 @@ jobs:
           # Clean scene
           bpy.ops.wm.read_factory_settings(use_empty=True)
           
-          # === Panel dimensions ===
-          width_m = 1.00     # 1 m wide
+          # Panel dimensions
+          width_m = 1.00     # 1 M wide
           depth_m = 0.01     # 1 cm thick
           
           # Load image and compute aspect
@@ -56,14 +56,19 @@ jobs:
           aspect = (img.size[0] / img.size[1]) if img.size[1] else 1.0
           height_m = width_m / aspect
           
-          # === Create front plane at origin ===
+          # Create front plane at origin
           bpy.ops.mesh.primitive_plane_add(size=1.0, enter_editmode=False)
           panel = bpy.context.active_object
           panel.name = "ArtPanel"
           
           # Scale to real size
           panel.scale = (width_m / 2.0, height_m / 2.0, 1.0)
-          bpy.ops.object.transform_apply(scale=True, rotation=False, location=False)
+          bpy.ops.object.transform_apply(scale=True, rotation=True, location=False)
+          
+          # Tilt upright: rotate -90° around X so face points +Y
+          import math
+          panel.rotation_euler[0] = math.radians(-90)
+          bpy.ops.object.transform_apply(rotation=True)
           
           # Solidify for thickness (push back so front stays at z=0)
           mod = panel.modifiers.new(name="Solidify", type='SOLIDIFY')
@@ -73,18 +78,19 @@ jobs:
           
           mesh = panel.data
           
-          # === Ensure UV layer exists ===
+          # Ensure a UV layer
           if not mesh.uv_layers:
               mesh.uv_layers.new(name="UVMap")
+          uv_layer = mesh.uv_layers.active  # MeshUVLoopLayer
           
-          # === Materials ===
+          # Materials
           mat_front = bpy.data.materials.new("FrontArt")
           mat_front.use_nodes = True
           f_bsdf = mat_front.node_tree.nodes.get("Principled BSDF")
           f_tex = mat_front.node_tree.nodes.new("ShaderNodeTexImage")
           f_tex.image = img
           f_tex.interpolation = "Smart"
-          f_tex.extension = "CLIP"
+          f_tex.extension = "CLIP"  # no tiling past edges
           mat_front.node_tree.links.new(f_tex.outputs["Color"], f_bsdf.inputs["Base Color"])
           f_bsdf.inputs["Roughness"].default_value = 0.7
           f_bsdf.inputs["Metallic"].default_value = 0.0
@@ -92,76 +98,70 @@ jobs:
           mat_side = bpy.data.materials.new("SideMat")
           mat_side.use_nodes = True
           s_bsdf = mat_side.node_tree.nodes.get("Principled BSDF")
-          s_bsdf.inputs["Base Color"].default_value = (1.0, 1.0, 1.0, 1.0)
+          s_bsdf.inputs["Base Color"].default_value = (1.0, 1.0, 1.0, 1.0)  # pure white
           s_bsdf.inputs["Roughness"].default_value = 0.9
           s_bsdf.inputs["Metallic"].default_value = 0.0
           
-          # Assign slots 0 and 1
+          # Assign material slots: 0 = front, 1 = sides/back
           mesh.materials.clear()
           mesh.materials.append(mat_front)
           mesh.materials.append(mat_side)
           
-          # Default all to side material
+          # Default all faces to side material
           for poly in mesh.polygons:
               poly.material_index = 1
           
-          # === bmesh for face/UV assignment ===
-          bm = bmesh.new()
-          bm.from_mesh(mesh)
-          bm.faces.ensure_lookup_table()
-          
-          # Identify front face: largest with +Z normal
-          front_face = None
-          max_area = 0
-          for f in bm.faces:
-              if f.normal.z > 0.5 and f.calc_area() > max_area:
-                  max_area = f.calc_area()
-                  front_face = f
-          if not front_face:
-              front_face = max(bm.faces, key=lambda f: f.calc_center_median().z)
-          
+          # Pick the front face (largest +Z quad)
+          candidates = [p for p in mesh.polygons if p.normal.z > 0.5]
+          front_face = max(candidates, key=lambda p: p.area) if candidates else max(mesh.polygons, key=lambda p: p.center.z)
           front_face.material_index = 0
           
-          # Normalize UVs to front face
-          xs = [v.co.x for v in front_face.verts]
-          ys = [v.co.y for v in front_face.verts]
+          # Planar UVs for the front face: fill 0..1 using local X/Y extents
+          xs, ys = [], []
+          for li in front_face.loop_indices:
+              v = mesh.vertices[mesh.loops[li].vertex_index]
+              xs.append(v.co.x); ys.append(v.co.y)
           min_x, max_x = min(xs), max(xs)
           min_y, max_y = min(ys), max(ys)
           dx = (max_x - min_x) or 1.0
           dy = (max_y - min_y) or 1.0
           
-          if not bm.loops.layers.uv:
-              bm.loops.layers.uv.new()
-          uv_lay = bm.loops.layers.uv.active
+          for li in front_face.loop_indices:
+              v = mesh.vertices[mesh.loops[li].vertex_index]
+              uv = uv_layer.data[li].uv
+              uv.x = (v.co.x - min_x) / dx
+              uv.y = (v.co.y - min_y) / dy
+
+          # Scale to real size
+          panel.scale = (width_m / 2.0, height_m / 2.0, 1.0)
+          bpy.ops.object.transform_apply(scale=True, rotation=True, location=False)
           
-          for loop in front_face.loops:
-              uv = loop[uv_lay].uv
-              uv.x = (loop.vert.co.x - min_x) / dx
-              uv.y = (loop.vert.co.y - min_y) / dy
+          # Tilt upright: rotate -90° around X so face points +Y
+          import math
+          panel.rotation_euler[0] = math.radians(-90)
+          bpy.ops.object.transform_apply(rotation=True)
           
-          bm.to_mesh(mesh)
-          bm.free()
-          
-          # === Ensure scene updates ===
-          bpy.context.view_layer.update()
-          
-          # === Export GLB (embedded textures) ===
+          # Export GLB (embedded textures)
           bpy.ops.export_scene.gltf(
               filepath=out_glb,
               export_format='GLB',
-              export_embed_images=True
+              export_image_format='AUTO',
+              export_yup=True,
+              export_apply=True,
+              export_texcoords=True,
+              export_normals=True,
+              export_materials='EXPORT',
+              use_selection=False
           )
           
-          # === Export USDZ ===
+          # Export USDZ
           bpy.ops.wm.usd_export(
               filepath=out_usdz,
-              export_textures=True
+              export_format='USDZ',
+              export_materials=True,
+              export_textures=True,
+              selected_objects_only=False
           )
-          
-          print("✅ AR panel exported to:")
-          print("   GLB :", out_glb)
-          print("   USDZ:", out_usdz)
-
           PY
 
       - name: Run Blender headless
