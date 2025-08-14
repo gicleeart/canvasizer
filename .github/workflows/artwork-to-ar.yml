@@ -63,7 +63,7 @@ jobs:
           
           # Scale to real size
           panel.scale = (width_m / 2.0, height_m / 2.0, 1.0)
-          bpy.ops.object.transform_apply(scale=True, rotation=False, location=False)
+          bpy.ops.object.transform_apply(scale=True, rotation=True, location=False)
           
           # Tilt upright: rotate -90° around X so face points +Y
           import math
