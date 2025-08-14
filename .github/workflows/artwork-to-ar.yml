@@ -75,6 +75,10 @@ jobs:
           mod.thickness = depth_m
           mod.offset = -1.0
           bpy.ops.object.modifier_apply(modifier=mod.name)
+
+          # Scale to real size
+          panel.scale = (width_m / 2.0, height_m / 2.0, 1.0)
+          bpy.ops.object.transform_apply(scale=True, rotation=True, location=False)
           
           mesh = panel.data
           
@@ -131,15 +135,6 @@ jobs:
               uv = uv_layer.data[li].uv
               uv.x = (v.co.x - min_x) / dx
               uv.y = (v.co.y - min_y) / dy
-
-          # Scale to real size
-          panel.scale = (width_m / 2.0, height_m / 2.0, 1.0)
-          bpy.ops.object.transform_apply(scale=True, rotation=True, location=False)
-          
-          # Tilt upright: rotate -90° around X so face points +Y
-          import math
-          panel.rotation_euler[0] = math.radians(-90)
-          bpy.ops.object.transform_apply(rotation=True)
           
           # Export GLB (embedded textures)
           bpy.ops.export_scene.gltf(
