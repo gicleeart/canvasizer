@@ -57,7 +57,7 @@ jobs:
           height_m = width_m / aspect
           
           # Create front plane at origin
-          bpy.ops.mesh.primitive_plane_add(size=1.0, enter_editmode=False, location=(0,0,1.0))
+          bpy.ops.mesh.primitive_plane_add(size=1.0, enter_editmode=False, location=(0, 0, 1.0))
           panel = bpy.context.active_object
           panel.name = "ArtPanel"
          
