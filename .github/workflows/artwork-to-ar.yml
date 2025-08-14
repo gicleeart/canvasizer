@@ -83,6 +83,11 @@ jobs:
           panel.location.z = height_m / 2.0
           bpy.ops.object.transform_apply(location=True)
 
+          # Recalculate normals to ensure correct face orientation
+          bpy.ops.object.mode_set(mode='EDIT')
+          bpy.ops.mesh.normals_make_consistent(inside=False)
+          bpy.ops.object.mode_set(mode='OBJECT')
+
           # Ensure a UV layer
           if not mesh.uv_layers:
               mesh.uv_layers.new(name="UVMap")
@@ -117,9 +122,9 @@ jobs:
               poly.material_index = 1
           
           # Pick the front face (now facing +Y after rotation)
-          candidates = [p for p in mesh.polygons if p.normal.y > 0.99]
+          candidates = [p for p in mesh.polygons if round(p.normal.y, 3) == 1.0]
           front_face = max(candidates, key=lambda p: p.area) if candidates else max(mesh.polygons, key=lambda p: p.center.y)
-          
+
           # Planar UVs for the front face: fill 0..1 using local X/Y extents
           xs, zs = [], []
           for li in front_face.loop_indices:
@@ -129,7 +134,10 @@ jobs:
           min_z, max_z = min(zs), max(zs)
           dx = (max_x - min_x) or 1.0
           dz = (max_z - min_z) or 1.0
-          
+
+          print("Front face normal:", front_face.normal)
+          print("Front face center:", front_face.center)
+
           for li in front_face.loop_indices:
               v = mesh.vertices[mesh.loops[li].vertex_index]
               uv = uv_layer.data[li].uv
