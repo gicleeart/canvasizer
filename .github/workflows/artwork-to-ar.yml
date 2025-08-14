@@ -57,14 +57,10 @@ jobs:
           height_m = width_m / aspect
           
           # Create front plane at origin
-          bpy.ops.mesh.primitive_plane_add(size=1.0, enter_editmode=False)
+          bpy.ops.mesh.primitive_plane_add(size=1.0, enter_editmode=False, location=(0,0,1.0))
           panel = bpy.context.active_object
           panel.name = "ArtPanel"
-          
-          # Scale to real size
-          panel.scale = (width_m / 2.0, height_m / 2.0, 1.0)
-          bpy.ops.object.transform_apply(scale=True, rotation=True, location=False)
-          
+         
           # Tilt upright: rotate +90° around X so face points +Y
           import math
           panel.rotation_euler[0] = math.radians(90)
@@ -115,7 +111,7 @@ jobs:
           for poly in mesh.polygons:
               poly.material_index = 1
           
-          # Pick the front face (largest +Z quad)
+          # Pick the front face (largest +Y quad)
           candidates = [p for p in mesh.polygons if p.normal.y > 0.5]
           front_face = max(candidates, key=lambda p: p.area) if candidates else max(mesh.polygons, key=lambda p: p.center.y)
           front_face.material_index = 0
