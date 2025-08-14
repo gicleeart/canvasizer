@@ -142,6 +142,12 @@ jobs:
                   v_ = (v.co.y - min_y) / dy
                   uv.x = 1.0 - u
                   uv.y = 1.0 - v_
+
+          import math
+
+          # Spin 180° around Z so the bottom edge flips to opposite side
+          panel.rotation_euler[2] += math.radians(180)
+          bpy.ops.object.transform_apply(rotation=True)
           
           # Export GLB (embedded textures)
           bpy.ops.export_scene.gltf(
