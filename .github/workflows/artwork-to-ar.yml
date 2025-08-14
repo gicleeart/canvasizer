@@ -37,6 +37,9 @@ jobs:
           
           # === CONFIG ===
           image_path = "/path/to/your/image.jpg"  # Replace with actual path
+          if not os.path.exists(img_path):
+              raise FileNotFoundError(f"Image not found: {img_path}")
+
           panel_thickness = 0.02  # Thickness in meters
           
           # === CLEANUP ===
@@ -136,6 +139,8 @@ jobs:
           
           # === DONE ===
           print("✅ Canvasizer complete. Panel is upright, aspect-correct, and textured.")
+
+          print("✅ Ready to export:", out_glb, out_usdz)
           
           # Export GLB (embedded textures)
           bpy.ops.export_scene.gltf(
