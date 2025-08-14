@@ -118,20 +118,30 @@ jobs:
           front_face.material_index = 0
           
           # Planar UVs for the front face: fill 0..1 using local X/Y extents
-          xs, ys = [], []
-          for li in front_face.loop_indices:
-              v = mesh.vertices[mesh.loops[li].vertex_index]
-              xs.append(v.co.x); ys.append(v.co.y)
-          min_x, max_x = min(xs), max(xs)
-          min_y, max_y = min(ys), max(ys)
-          dx = (max_x - min_x) or 1.0
-          dy = (max_y - min_y) or 1.0
+          def rotate_texture_180(mesh, face, uv_layer):
+              """
+              Rotate the texture 180 degrees on a specific face by flipping both UV axes.
+              mesh: bpy.types.Mesh
+              face: bpy.types.MeshPolygon (target face)
+              uv_layer: bpy.types.MeshUVLoopLayer (mesh.uv_layers.active)
+              """
+              # Build planar 0..1 UVs from local X/Y extents, then invert both axes
+              xs, ys = [], []
+              for li in face.loop_indices:
+                  v = mesh.vertices[mesh.loops[li].vertex_index]
+                  xs.append(v.co.x); ys.append(v.co.y)
+              min_x, max_x = min(xs), max(xs)
+              min_y, max_y = min(ys), max(ys)
+              dx = (max_x - min_x) or 1.0
+              dy = (max_y - min_y) or 1.0
           
-          for li in front_face.loop_indices:
-              v = mesh.vertices[mesh.loops[li].vertex_index]
-              uv = uv_layer.data[li].uv
-              uv.x = 1.0 - (v.co.x - min_x) / dx
-              uv.y = 1.0 - (v.co.y - min_y) / dy # Flip vertically
+              for li in face.loop_indices:
+                  v = mesh.vertices[mesh.loops[li].vertex_index]
+                  uv = uv_layer.data[li].uv
+                  u = (v.co.x - min_x) / dx
+                  v_ = (v.co.y - min_y) / dy
+                  uv.x = 1.0 - u
+                  uv.y = 1.0 - v_
           
           # Export GLB (embedded textures)
           bpy.ops.export_scene.gltf(
