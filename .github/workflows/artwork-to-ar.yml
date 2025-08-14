@@ -64,12 +64,7 @@ jobs:
           # Scale to real size
           panel.scale = (width_m / 2.0, height_m / 2.0, 1.0)
           bpy.ops.object.transform_apply(scale=True, rotation=False, location=False)
-
-          # ADD these two lines ↓
-          import math
-          panel.rotation_euler[0] = math.radians(90)
-          bpy.ops.object.transform_apply(rotation=True)
-                   
+                            
           # Solidify for thickness (push back so front stays at z=0)
           mod = panel.modifiers.new(name="Solidify", type='SOLIDIFY')
           mod.thickness = depth_m
