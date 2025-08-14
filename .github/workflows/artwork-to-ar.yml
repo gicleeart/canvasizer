@@ -116,8 +116,8 @@ jobs:
               poly.material_index = 1
           
           # Pick the front face (largest +Z quad)
-          candidates = [p for p in mesh.polygons if p.normal.z > 0.5]
-          front_face = max(candidates, key=lambda p: p.area) if candidates else max(mesh.polygons, key=lambda p: p.center.z)
+          candidates = [p for p in mesh.polygons if p.normal.y > 0.5]
+          front_face = max(candidates, key=lambda p: p.area) if candidates else max(mesh.polygons, key=lambda p: p.center.y)
           front_face.material_index = 0
           
           # Planar UVs for the front face: fill 0..1 using local X/Y extents
