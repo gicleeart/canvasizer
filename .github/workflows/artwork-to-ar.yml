@@ -47,8 +47,8 @@ jobs:
           bpy.ops.wm.read_factory_settings(use_empty=True)
           
           # Panel dimensions
-          width_m = 0.30     # 30 cm wide
-          depth_m = 0.01     # 3 cm thick
+          width_m = 1.00     # 1 M wide
+          depth_m = 0.01     # 1 cm thick
           
           # Load image and compute aspect
           img = bpy.data.images.load(img_path)
@@ -61,9 +61,14 @@ jobs:
           panel = bpy.context.active_object
           panel.name = "ArtPanel"
           
-          # Scale to real size and apply
+          # Scale to real size
           panel.scale = (width_m / 2.0, height_m / 2.0, 1.0)
-          bpy.ops.object.transform_apply(scale=True, rotation=True, location=False)
+          bpy.ops.object.transform_apply(scale=True, rotation=False, location=False)
+          
+          # Tilt upright: rotate -90° around X so face points +Y
+          import math
+          panel.rotation_euler[0] = math.radians(-90)
+          bpy.ops.object.transform_apply(rotation=True)
           
           # Solidify for thickness (push back so front stays at z=0)
           mod = panel.modifiers.new(name="Solidify", type='SOLIDIFY')
