@@ -67,7 +67,7 @@ jobs:
           
           # Tilt upright: rotate -90° around X so face points +Y
           import math
-          panel.rotation_euler[0] = math.radians(-90)
+          panel.rotation_euler[2] = math.radians(90)
           bpy.ops.object.transform_apply(rotation=True)
           
           # Solidify for thickness (push back so front stays at z=0)
