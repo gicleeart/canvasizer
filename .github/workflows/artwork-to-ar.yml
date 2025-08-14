@@ -130,7 +130,7 @@ jobs:
           for li in front_face.loop_indices:
               v = mesh.vertices[mesh.loops[li].vertex_index]
               uv = uv_layer.data[li].uv
-              uv.x = (v.co.x - min_x) / dx
+              uv.x = 1.0 - (v.co.x - min_x) / dx
               uv.y = 1.0 - (v.co.y - min_y) / dy # Flip vertically
           
           # Export GLB (embedded textures)
