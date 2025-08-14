@@ -33,116 +33,116 @@ jobs:
         run: |
           cat > scripts/make_ar_plane.py << 'PY'
           import bpy
-          import bmesh
+          import os
+          import math
           
-          # === CONFIG ===
-          image_path = "/path/to/your/image.jpg"  # Replace with actual path
-          if not os.path.exists(img_path):
-              raise FileNotFoundError(f"Image not found: {img_path}")
-
-          panel_thickness = 0.02  # Thickness in meters
+          # === ENV + VALIDATION ===
+          img_path  = os.environ.get("ARIP_IMAGE_PATH")
+          out_glb   = os.environ.get("ARIP_OUT_GLB")
+          out_usdz  = os.environ.get("ARIP_OUT_USDZ")
+          thickness_m = 0.02  # 2 cm
           
-          # === CLEANUP ===
-          bpy.ops.object.select_all(action='DESELECT')
-          for obj in bpy.data.objects:
-              obj.select_set(True)
-          bpy.ops.object.delete()
+          print(f"🔍 ARIP_IMAGE_PATH = {img_path}")
+          print(f"🔍 ARIP_OUT_GLB    = {out_glb}")
+          print(f"🔍 ARIP_OUT_USDZ   = {out_usdz}")
           
-          # === LOAD IMAGE ===
-          img = bpy.data.images.load(image_path)
+          if not img_path or not os.path.exists(img_path):
+              raise FileNotFoundError(f"Image not found or ARIP_IMAGE_PATH unset: {img_path}")
+          if not out_glb:
+              raise ValueError("ARIP_OUT_GLB not set")
+          if not out_usdz:
+              print("⚠️ ARIP_OUT_USDZ not set; will skip USDZ export")
           
-          # === GET IMAGE DIMENSIONS ===
-          width, height = img.size
-          aspect_ratio = width / height
+          os.makedirs(os.path.dirname(out_glb), exist_ok=True)
+          if out_usdz:
+              os.makedirs(os.path.dirname(out_usdz), exist_ok=True)
           
-          # === CREATE PANEL ===
-          bpy.ops.mesh.primitive_cube_add(size=1)
+          # === CLEAN SCENE ===
+          if bpy.ops.object.mode_set.poll():
+              bpy.ops.object.mode_set(mode='OBJECT')
+          bpy.ops.object.select_all(action='SELECT')
+          bpy.ops.object.delete(use_global=False, confirm=False)
+          
+          # === LOAD IMAGE + ASPECT ===
+          img = bpy.data.images.load(img_path)
+          w, h = img.size
+          if not w or not h:
+              raise RuntimeError("Loaded image has invalid dimensions")
+          aspect = w / h  # width:height
+          
+          # === BUILD PANEL (plane + solidify) ===
+          # Start with a 1×1 plane in XY, UVs default to 0..1.
+          bpy.ops.mesh.primitive_plane_add(size=1, enter_editmode=False)
           panel = bpy.context.active_object
           panel.name = "CanvasPanel"
           
-          # Scale to match aspect ratio and thickness
-          panel.scale.x = 0.5
-          panel.scale.y = panel_thickness / 2
-          panel.scale.z = 0.5 / aspect_ratio
+          # Scale to match aspect: make height = 1.0 m, width = aspect m
+          # Using dimensions is straightforward and applies scale correctly.
+          panel.dimensions = (aspect, 1.0, 0.0)
           
-          # Apply transforms
-          bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
+          # Rotate -90° around X so front faces +Y (upright panel)
+          panel.rotation_euler[0] = math.radians(-90)
+          bpy.ops.object.transform_apply(location=False, rotation=True, scale=True)
           
-          # === ROTATE PANEL UPRIGHT ===
-          panel.rotation_euler[0] = -1.5708  # Rotate -90° around X to stand upright
-          bpy.ops.object.transform_apply(location=False, rotation=True, scale=False)
+          # Solidify to thickness along Y
+          solid = panel.modifiers.new(name="Solidify", type='SOLIDIFY')
+          solid.thickness = thickness_m
+          solid.offset = 0.0  # thicken equally around the mid-plane
+          solid.use_rim = True
+          bpy.ops.object.modifier_apply(modifier=solid.name)
           
-          # === RECALCULATE NORMALS ===
+          # Ensure normals consistent (outward)
           bpy.ops.object.mode_set(mode='EDIT')
           bpy.ops.mesh.normals_make_consistent(inside=False)
           bpy.ops.object.mode_set(mode='OBJECT')
           
-          # === DETECT FRONT FACE (+Y NORMAL) ===
-          mesh = panel.data
-          candidates = [p for p in mesh.polygons if round(p.normal.y, 3) == 1.0]
-          front_face = max(candidates, key=lambda p: p.area) if candidates else max(mesh.polygons, key=lambda p: p.center.y)
+          # === MATERIALS ===
+          # Front: textured. Sides/back: white.
+          mat_tex = bpy.data.materials.new(name="CanvasFront")
+          mat_tex.use_nodes = True
+          nodes = mat_tex.node_tree.nodes
+          links = mat_tex.node_tree.links
+          for n in list(nodes): nodes.remove(n)
+          out_node = nodes.new("ShaderNodeOutputMaterial")
+          bsdf = nodes.new("ShaderNodeBsdfPrincipled")
+          tex = nodes.new("ShaderNodeTexImage")
+          tex.image = img
+          links.new(tex.outputs["Color"], bsdf.inputs["Base Color"])
+          links.new(bsdf.outputs["BSDF"], out_node.inputs["Surface"])
           
-          # === CREATE UV MAP ===
+          mat_white = bpy.data.materials.new(name="CanvasSides")
+          mat_white.use_nodes = True
+          wnodes = mat_white.node_tree.nodes
+          wlinks = mat_white.node_tree.links
+          for n in list(wnodes): wnodes.remove(n)
+          wout = wnodes.new("ShaderNodeOutputMaterial")
+          wbsdf = wnodes.new("ShaderNodeBsdfPrincipled")
+          wbsdf.inputs["Base Color"].default_value = (1.0, 1.0, 1.0, 1.0)
+          wbsdf.inputs["Roughness"].default_value = 0.6
+          wlinks.new(wbsdf.outputs["BSDF"], wout.inputs["Surface"])
+          
+          panel.data.materials.clear()
+          panel.data.materials.append(mat_tex)    # slot 0
+          panel.data.materials.append(mat_white)  # slot 1
+          
+          # Assign front faces (normal ~ +Y) to textured; others to white
+          mesh = panel.data
+          mesh.calc_normals()
+          for poly in mesh.polygons:
+              # dot with +Y
+              if poly.normal.y > 0.999:  # very close to +Y
+                  poly.material_index = 0
+              else:
+                  poly.material_index = 1
+          
+          # UVs: plane already has 0..1 UV on the front; ensure UV layer exists
           if not mesh.uv_layers:
               mesh.uv_layers.new(name="UVMap")
-          uv_layer = mesh.uv_layers.active.data
           
-          # Map image onto front face using X and Z
-          verts = panel.data.vertices
-          xs, zs = [], []
-          for loop_index in front_face.loop_indices:
-              v = verts[panel.data.loops[loop_index].vertex_index]
-              xs.append(v.co.x)
-              zs.append(v.co.z)
-          min_x, max_x = min(xs), max(xs)
-          min_z, max_z = min(zs), max(zs)
-          dx = max_x - min_x
-          dz = max_z - min_z
+          print("✅ Canvas built: upright, aspect-correct, white sides")
           
-          for loop_index in front_face.loop_indices:
-              v = verts[panel.data.loops[loop_index].vertex_index]
-              uv = uv_layer[loop_index].uv
-              uv.x = (v.co.x - min_x) / dx
-              uv.y = (v.co.z - min_z) / dz
-          
-          # === CREATE MATERIAL ===
-          mat = bpy.data.materials.new(name="CanvasMaterial")
-          mat.use_nodes = True
-          nodes = mat.node_tree.nodes
-          links = mat.node_tree.links
-          
-          # Clear default nodes
-          for node in nodes:
-              nodes.remove(node)
-          
-          # Add nodes
-          output = nodes.new(type='ShaderNodeOutputMaterial')
-          diffuse = nodes.new(type='ShaderNodeBsdfPrincipled')
-          tex_image = nodes.new(type='ShaderNodeTexImage')
-          tex_image.image = img
-          
-          # Link nodes
-          links.new(tex_image.outputs['Color'], diffuse.inputs['Base Color'])
-          links.new(diffuse.outputs['BSDF'], output.inputs['Surface'])
-          
-          # Assign material
-          panel.data.materials.append(mat)
-          
-          # === ASSIGN PURE WHITE TO OTHER FACES ===
-          white_color = (1.0, 1.0, 1.0, 1.0)
-          for poly in mesh.polygons:
-              if poly.index != front_face.index:
-                  poly.material_index = 0
-                  for loop_index in poly.loop_indices:
-                      uv_layer[loop_index].uv = (0.0, 0.0)  # Collapse UVs
-                  # Optional: assign white via vertex color or separate material if needed
-          
-          # === DONE ===
-          print("✅ Canvasizer complete. Panel is upright, aspect-correct, and textured.")
-
-          print("✅ Ready to export:", out_glb, out_usdz)
-          
-          # Export GLB (embedded textures)
+          # === EXPORTS ===
+          print(f"✅ Exporting GLB to: {out_glb}")
           bpy.ops.export_scene.gltf(
               filepath=out_glb,
               export_format='GLB',
@@ -154,15 +154,24 @@ jobs:
               export_materials='EXPORT',
               use_selection=False
           )
+          print("✅ GLB export complete")
           
-          # Export USDZ
-          bpy.ops.wm.usd_export(
-              filepath=out_usdz,
-              export_format='USDZ',
-              export_materials=True,
-              export_textures=True,
-              selected_objects_only=False
-          )
+          # USDZ (best-effort)
+          if out_usdz:
+              try:
+                  if hasattr(bpy.ops.wm, "usd_export"):
+                      print(f"✅ Exporting USDZ to: {out_usdz}")
+                      bpy.ops.wm.usd_export(
+                          filepath=out_usdz,
+                          export_materials=True,
+                          export_textures=True,
+                          selected_objects_only=False
+                      )
+                      print("✅ USDZ export complete")
+                  else:
+                      print("⚠️ USD exporter not available in this Blender build; skipping USDZ")
+              except Exception as e:
+                  print(f"⚠️ USDZ export failed: {e}; continuing with GLB only")
           PY
 
       - name: Run Blender headless
