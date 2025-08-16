@@ -13,8 +13,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Blender
-        run: brew install --cask blender
+      - name: Cache Blender
+        uses: actions/cache@v3
+        with:
+          path: blender
+          key: blender-macos-3.6.5  # or whatever version you're using
+
+      - name: Download Blender manually (if not cached)
+        run: |
+          mkdir -p blender
+          if [ ! -f blender/blender.app/Contents/MacOS/Blender ]; then
+            echo "⬇️ Downloading Blender..."
+            curl -L https://mirror.clarkson.edu/blender/release/Blender3.6/blender-3.6.5-macos-x64.dmg -o blender/blender.dmg
+            hdiutil attach blender/blender.dmg -mountpoint /Volumes/Blender
+            cp -R "/Volumes/Blender/Blender.app" blender/
+            hdiutil detach /Volumes/Blender
+          else
+            echo "✅ Blender already cached"
+          fi
 
       - name: Download artwork
         run: |
@@ -184,7 +200,7 @@ jobs:
           ARIP_IMAGE_PATH: ${{ github.workspace }}/assets/artwork.png
           ARIP_OUT_GLB:   ${{ github.workspace }}/output/artwork.glb
           ARIP_OUT_USDZ:  ${{ github.workspace }}/output/artwork.usdz
-        run: /Applications/Blender.app/Contents/MacOS/Blender -b -noaudio --python scripts/make_ar_plane.py
+        run: blender/blender.app/Contents/MacOS/Blender -b -noaudio --python scripts/make_ar_plane.py
 
       - name: Inspect post‑Blender output
         run: |
