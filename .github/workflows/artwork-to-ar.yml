@@ -54,10 +54,14 @@ jobs:
           restore-keys: |
             usd-build-${{ runner.os }}-
       
-      - name: Build USD tools
+      - name: Build USD tools (skip if already built)
         run: |
-          cd USD
-          python build_scripts/build_usd.py ${{ github.workspace }}/usd-tools --no-usdview --no-tests --no-imaging
+          if [ -f "${{ github.workspace }}/usd-tools/bin/usdzip" ]; then
+            echo "✅ USD tools already built — skipping build"
+          else
+            cd USD
+            python build_scripts/build_usd.py ${{ github.workspace }}/usd-tools --no-usdview --no-tests --no-imaging
+          fi
 
       - name: Download artwork
         run: |
