@@ -186,13 +186,94 @@ jobs:
           )
           
           # Export USDZ
-          bpy.ops.wm.usd_export(
-              filepath=out_usdz,
-              export_format='USDZ',
-              export_materials=True,
-              export_textures=True,
-              selected_objects_only=False
-          )
+          import os
+
+          # Select all objects to ensure export includes them
+          for obj in bpy.context.scene.objects:
+              obj.select_set(True)
+          bpy.context.view_layer.objects.active = panel
+
+          # Confirm texture format is compatible
+          img_ext = os.path.splitext(img_path)[1].lower()
+          if img_ext not in [".png", ".jpg", ".jpeg"]:
+              print(f"⚠️ Texture format {img_ext} may not be USDZ-compatible")
+
+          # Export USDZ
+          
+          from PIL import Image
+
+          # === CONFIG ===
+          img_path = "assets/artwork.png"
+          out_usdz = "output/model.usdz"
+
+          # === Convert texture if needed ===
+          def ensure_jpeg_texture(path):
+              ext = os.path.splitext(path)[1].lower()
+              if ext not in [".jpg", ".jpeg", ".png"]:
+                  print(f"Converting {path} to JPEG...")
+                  img = Image.open(path).convert("RGB")
+                  new_path = path.replace(ext, ".jpg")
+                  img.save(new_path, "JPEG")
+                  return new_path
+              return path
+
+          img_path = ensure_jpeg_texture(img_path)
+
+          # === Load image and pack ===
+          img = bpy.data.images.load(img_path)
+          img.pack()
+          print(f"Loaded and packed texture: {img.filepath}")
+
+          # === Create material ===
+          mat = bpy.data.materials.new(name="ArtworkMaterial")
+          mat.use_nodes = True
+          nodes = mat.node_tree.nodes
+          tex_node = nodes.new(type='ShaderNodeTexImage')
+          tex_node.image = img
+
+          # === Create mesh ===
+          mesh = bpy.data.meshes.new("ArtworkMesh")
+          obj = bpy.data.objects.new("Artwork", mesh)
+          bpy.context.collection.objects.link(obj)
+          bpy.context.view_layer.objects.active = obj
+          obj.select_set(True)
+
+          # === Define geometry ===
+          verts = [(-1, -1, 0), (1, -1, 0), (1, 1, 0), (-1, 1, 0)]
+          faces = [(0, 1, 2, 3)]
+          mesh.from_pydata(verts, [], faces)
+          mesh.update()
+
+          # === Apply UVs to all faces ===
+          bpy.ops.object.mode_set(mode='EDIT')
+          bpy.ops.uv.smart_project()
+          bpy.ops.object.mode_set(mode='OBJECT')
+
+          # === Assign material ===
+          if obj.data.materials:
+              obj.data.materials[0] = mat
+          else:
+              obj.data.materials.append(mat)
+
+          # === Export USDZ ===
+          bpy.ops.wm.usd_export(filepath=out_usdz, export_textures=True)
+          print(f"Exported USDZ: {out_usdz}")
+          print(f"USDZ file size: {os.path.getsize(out_usdz)} bytes")
+
+          # Check file size
+          usdz_size = os.path.getsize(out_usdz) if os.path.exists(out_usdz) else 0
+          if usdz_size < 10_000:
+              print(f"⚠️ USDZ file is suspiciously small ({usdz_size} bytes) — falling back to USDA export")
+              fallback_usda = out_usdz.replace(".usdz", ".usda")
+              bpy.ops.wm.usd_export(
+                  filepath=fallback_usda,
+                  export_format='USD',
+                  export_materials=True,
+                  export_textures=True,
+                  selected_objects_only=False
+              )
+              print(f"✅ Fallback USDA export complete: {fallback_usda}")
+
           PY
 
       - name: Run Blender headless
