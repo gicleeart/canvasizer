@@ -35,17 +35,16 @@ jobs:
       - name: Cache USD build
         uses: actions/cache@v3
         with:
-          path: /usr/local/USD
+          path: ${{ github.workspace }}/usd-tools
           key: usd-build-${{ runner.os }}-${{ hashFiles('USD/build_scripts/build_usd.py') }}
           restore-keys: |
             usd-build-${{ runner.os }}-
 
-      - name: Install USD tools
-        if: steps.cache.outputs.cache-hit != 'true'
+      - name: Build USD tools
         run: |
           git clone https://github.com/PixarAnimationStudios/USD.git
           cd USD
-          python build_scripts/build_usd.py /usr/local/USD --no-usdview --no-tests --no-imaging
+          python build_scripts/build_usd.py ${{ github.workspace }}/usd-tools --no-usdview --no-tests --no-imaging
 
       - name: Download artwork
         run: |
@@ -215,12 +214,14 @@ jobs:
 
           # Export USDZ
           
+          import os
           from PIL import Image
-
+          import bpy
+          
           # === CONFIG ===
           img_path = "assets/artwork.png"
-          out_usdz = "output/model.usdz"
-
+          out_usdz = "output/artwork.usdz"
+          
           # === Convert texture if needed ===
           def ensure_jpeg_texture(path):
               ext = os.path.splitext(path)[1].lower()
@@ -231,51 +232,47 @@ jobs:
                   img.save(new_path, "JPEG")
                   return new_path
               return path
-
+          
           img_path = ensure_jpeg_texture(img_path)
-
+          
           # === Load image and pack ===
           img = bpy.data.images.load(img_path)
           img.pack()
           print(f"Loaded and packed texture: {img.filepath}")
-
+          
           # === Create material ===
           mat = bpy.data.materials.new(name="ArtworkMaterial")
           mat.use_nodes = True
           nodes = mat.node_tree.nodes
           tex_node = nodes.new(type='ShaderNodeTexImage')
           tex_node.image = img
-
+          
           # === Create mesh ===
           mesh = bpy.data.meshes.new("ArtworkMesh")
           obj = bpy.data.objects.new("Artwork", mesh)
           bpy.context.collection.objects.link(obj)
           bpy.context.view_layer.objects.active = obj
           obj.select_set(True)
-
+          
           # === Define geometry ===
           verts = [(-1, -1, 0), (1, -1, 0), (1, 1, 0), (-1, 1, 0)]
           faces = [(0, 1, 2, 3)]
           mesh.from_pydata(verts, [], faces)
           mesh.update()
-
-          # === Apply UVs to all faces ===
+          
+          # === Apply UVs ===
           bpy.ops.object.mode_set(mode='EDIT')
           bpy.ops.uv.smart_project()
           bpy.ops.object.mode_set(mode='OBJECT')
-
+          
           # === Assign material ===
-          if obj.data.materials:
-              obj.data.materials[0] = mat
-          else:
-              obj.data.materials.append(mat)
-
+          obj.data.materials.append(mat)
+          
           # === Export USDZ ===
           bpy.ops.wm.usd_export(filepath=out_usdz, export_textures=True)
           print(f"Exported USDZ: {out_usdz}")
-          print(f"USDZ file size: {os.path.getsize(out_usdz)} bytes")
-
-          # Check file size
+          
+          # === Validate export ===
           usdz_size = os.path.getsize(out_usdz) if os.path.exists(out_usdz) else 0
           if usdz_size < 10_000:
               print(f"⚠️ USDZ file is suspiciously small ({usdz_size} bytes) — falling back to USDA export")
