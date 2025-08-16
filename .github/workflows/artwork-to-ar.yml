@@ -36,7 +36,7 @@ jobs:
         run: |
           git clone https://github.com/PixarAnimationStudios/USD.git
           cd USD
-          python build_scripts/build_usd.py /usr/local/USD
+          python build_scripts/build_usd.py /usr/local/USD --no-python --no-tests --no-imaging --no-usdview
 
       - name: Download artwork
         run: |
