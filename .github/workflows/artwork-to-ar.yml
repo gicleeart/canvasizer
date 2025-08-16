@@ -32,6 +32,12 @@ jobs:
             echo "✅ Blender already cached"
           fi
 
+      - name: Install USD tools
+        run: |
+          git clone https://github.com/PixarAnimationStudios/USD.git
+          cd USD
+          python build_scripts/build_usd.py /usr/local/USD
+
       - name: Download artwork
         run: |
           mkdir -p assets scripts output
