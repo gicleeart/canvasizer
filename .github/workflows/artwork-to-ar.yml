@@ -47,10 +47,6 @@ jobs:
               out_glb  = os.environ["ARIP_OUT_GLB"]
               out_usdz = os.environ["ARIP_OUT_USDZ"]
 
-              if not os.path.exists(img_path):
-                  print(f"❌ ERROR: Input image not found at {img_path}")
-                  sys.exit(1)
-
               os.makedirs(os.path.dirname(out_glb), exist_ok=True)
               bpy.ops.wm.read_factory_settings(use_empty=True)
 
@@ -67,50 +63,31 @@ jobs:
               print(f"📐 Dimensions: {width_m:.2f}m x {height_m:.2f}m x {depth_m:.2f}m")
 
               # --- ROBUST GEOMETRY CREATION ---
-              # Create the plane and rotate its vertices in Edit Mode to 'bake' the orientation.
-              # This provides a stable base for UV unwrapping and prevents random rotations.
               bpy.ops.mesh.primitive_plane_add(size=1.0, enter_editmode=True, location=(0, 0, 0))
               bpy.ops.transform.rotate(value=math.radians(90), orient_axis='X')
               bpy.ops.object.mode_set(mode='OBJECT')
-              
               panel = bpy.context.active_object
               panel.name = "ArtPanel"
-
-              # Apply scale and solidify
               panel.dimensions = (width_m, height_m, 0)
               bpy.ops.object.transform_apply(scale=True)
-              
               mod = panel.modifiers.new(name="Solidify", type='SOLIDIFY')
               mod.thickness = depth_m
               mod.offset = -1
               bpy.ops.object.modifier_apply(modifier=mod.name)
 
-              # --- STABLE UV UNWRAPPING ---
-              # With stable geometry, a simple unwrap + vertical flip is all we need.
-              print("🔧 Unwrapping UVs...")
-              mesh = panel.data
-              bpy.ops.object.mode_set(mode='EDIT')
-              bpy.ops.mesh.select_all(action='SELECT')
-              bpy.ops.uv.unwrap()
-              bpy.ops.object.mode_set(mode='OBJECT')
-
-              uv_layer = mesh.uv_layers.active.data
-              for loop in mesh.loops:
-                  uv_layer[loop.index].uv.y = 1.0 - uv_layer[loop.index].uv.y
-
               # --- MATERIAL SETUP ---
+              mesh = panel.data
               mat_front = bpy.data.materials.new("FrontArt")
               mat_front.use_nodes = True
               f_bsdf = mat_front.node_tree.nodes.get("Principled BSDF")
               f_tex = mat_front.node_tree.nodes.new("ShaderNodeTexImage")
               f_tex.image = img
-              
               uv_map_node = mat_front.node_tree.nodes.new("ShaderNodeUVMap")
-              uv_map_node.uv_map = mesh.uv_layers.active.name
               mat_front.node_tree.links.new(uv_map_node.outputs["UV"], f_tex.inputs["Vector"])
               mat_front.node_tree.links.new(f_tex.outputs["Color"], f_bsdf.inputs["Base Color"])
               
               mat_side = bpy.data.materials.new("SideMat")
+              mat_side.use_nodes = True # <-- FIX: This line was missing, causing the error
               s_bsdf = mat_side.node_tree.nodes.get("Principled BSDF")
               s_bsdf.inputs["Base Color"].default_value = (0.8, 0.8, 0.8, 1.0)
 
@@ -121,15 +98,28 @@ jobs:
               for i, poly in enumerate(mesh.polygons):
                   poly.material_index = 0 if i == front_face_index else 1
 
+              # --- STABLE UV UNWRAPPING (Corrected Order) ---
+              print("🔧 Unwrapping front face...")
+              bpy.ops.object.mode_set(mode='EDIT')
+              bpy.ops.mesh.select_all(action='DESELECT')
+              bpy.ops.mesh.select_mode(type="FACE")
+              mesh.polygons[front_face_index].select = True
+              bpy.ops.uv.unwrap()
+              bpy.ops.object.mode_set(mode='OBJECT')
+
+              # Apply vertical flip to the UVs
+              front_face = mesh.polygons[front_face_index]
+              uv_layer = mesh.uv_layers.active.data
+              for loop_index in front_face.loop_indices:
+                  uv_layer[loop_index].uv.y = 1.0 - uv_layer[loop_index].uv.y
+
               # --- ROBUST TEXTURE HANDLING FOR USDZ ---
-              # Save the image to a file and point the node to it directly.
-              # This makes the path unambiguous for the exporter.
               texture_filename = "artwork_texture.png"
               output_dir = os.path.dirname(out_glb)
               new_texture_path = os.path.join(output_dir, texture_filename)
               print(f"💾 Saving texture for USDZ compatibility to: {new_texture_path}")
               img.save_render(filepath=new_texture_path)
-              img.filepath = new_texture_path # Update the image node's source path
+              img.filepath = new_texture_path
 
               # --- Export Files ---
               print("✅ Object setup complete. Exporting files...")
