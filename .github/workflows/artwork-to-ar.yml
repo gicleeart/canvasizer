@@ -105,7 +105,7 @@ jobs:
           img = bpy.data.images.load(img_path)
           
           # ✅ THE FINAL FIX: Tell Blender to pass the raw color data through.
-          img.colorspace_settings.name = "sRGB OETF"
+          img.colorspace_settings.name = "Non-Color"
 
           width_m = 1.50
           depth_m = 0.02
