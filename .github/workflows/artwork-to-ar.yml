@@ -57,9 +57,10 @@ jobs:
               # --- Image and Dimensions ---
               print(f"🖼️ Loading image: {img_path}")
               img = bpy.data.images.load(img_path)
+              img.pack()
               img.colorspace_settings.name = "sRGB"
+              
               aspect = (img.size[0] / img.size[1]) if img.size[1] else 1.0
-
               width_m = 1.50
               depth_m = 0.02
               height_m = width_m / aspect
@@ -80,18 +81,27 @@ jobs:
               panel.rotation_euler[0] = math.radians(90)
               bpy.ops.object.transform_apply(rotation=True)
 
-              # --- UV Unwrapping ---
+              # --- Precise UV Unwrapping ---
+              print("🔧 Unwrapping UVs...")
+              bpy.context.view_layer.objects.active = panel
               bpy.ops.object.mode_set(mode='EDIT')
               bpy.ops.mesh.select_all(action='SELECT')
-              bpy.ops.uv.smart_project()
+              bpy.ops.uv.unwrap()
               bpy.ops.object.mode_set(mode='OBJECT')
 
               # --- Materials ---
+              mesh = panel.data
               mat_front = bpy.data.materials.new("FrontArt")
               mat_front.use_nodes = True
               f_bsdf = mat_front.node_tree.nodes.get("Principled BSDF")
               f_tex = mat_front.node_tree.nodes.new("ShaderNodeTexImage")
               f_tex.image = img
+              
+              # --- FIX for USDZ Texture ---
+              uv_map_node = mat_front.node_tree.nodes.new("ShaderNodeUVMap")
+              uv_map_node.uv_map = mesh.uv_layers.active.name
+              mat_front.node_tree.links.new(uv_map_node.outputs["UV"], f_tex.inputs["Vector"])
+
               mat_front.node_tree.links.new(f_tex.outputs["Color"], f_bsdf.inputs["Base Color"])
               f_bsdf.inputs["Roughness"].default_value = 0.7
 
@@ -101,7 +111,6 @@ jobs:
               s_bsdf.inputs["Base Color"].default_value = (0.8, 0.8, 0.8, 1.0)
               s_bsdf.inputs["Roughness"].default_value = 0.9
 
-              mesh = panel.data
               mesh.materials.append(mat_front)
               mesh.materials.append(mat_side)
 
@@ -111,8 +120,18 @@ jobs:
               front_face = max(mesh.polygons, key=lambda p: p.center.y)
               front_face.material_index = 0
 
+              # --- FINAL FIX for Image Rotation ---
+              print("🔄 Correcting UV rotation...")
+              uv_layer = mesh.uv_layers.active.data
+              for loop_index in front_face.loop_indices:
+                  # Read original UV coordinate
+                  original_uv = uv_layer[loop_index].uv[:]
+                  # Apply 90-degree clockwise rotation: (u,v) -> (v, 1-u)
+                  uv_layer[loop_index].uv.x = original_uv[1]
+                  uv_layer[loop_index].uv.y = 1.0 - original_uv[0]
+
               # --- Export Files ---
-              print("✅ Object created. Exporting files...")
+              print("✅ Object setup complete. Exporting files...")
               bpy.ops.export_scene.gltf(filepath=out_glb, export_format='GLB', export_yup=True, export_apply=True)
               print(f"✅ GLB exported to {out_glb}")
 
@@ -126,7 +145,7 @@ jobs:
           except Exception as e:
               print("❌ An error occurred during Blender script execution:")
               traceback.print_exc()
-              sys.exit(1) # Exit with a non-zero code to fail the GitHub Actions step
+              sys.exit(1)
           PY
 
       - name: Upload AR artifacts
