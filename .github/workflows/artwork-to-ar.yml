@@ -82,7 +82,6 @@ jobs:
               bpy.ops.object.transform_apply(rotation=True)
 
               # --- Precise UV Unwrapping ---
-              # This must happen BEFORE materials are finalized
               print("🔧 Unwrapping UVs...")
               bpy.context.view_layer.objects.active = panel
               bpy.ops.object.mode_set(mode='EDIT')
@@ -99,7 +98,6 @@ jobs:
               f_tex.image = img
               
               # --- FIX for USDZ Texture ---
-              # Explicitly add a UV Map node to ensure the exporter finds the texture coordinates.
               uv_map_node = mat_front.node_tree.nodes.new("ShaderNodeUVMap")
               uv_map_node.uv_map = mesh.uv_layers.active.name
               mat_front.node_tree.links.new(uv_map_node.outputs["UV"], f_tex.inputs["Vector"])
@@ -122,15 +120,15 @@ jobs:
               front_face = max(mesh.polygons, key=lambda p: p.center.y)
               front_face.material_index = 0
 
-              # --- FIX for Image Rotation ---
+              # --- FINAL FIX for Image Rotation ---
               print("🔄 Correcting UV rotation...")
               uv_layer = mesh.uv_layers.active.data
               for loop_index in front_face.loop_indices:
                   # Read original UV coordinate
                   original_uv = uv_layer[loop_index].uv[:]
-                  # Apply 90-degree counter-clockwise rotation: (u,v) -> (1-v, u)
-                  uv_layer[loop_index].uv.x = 1.0 - original_uv[1]
-                  uv_layer[loop_index].uv.y = original_uv[0]
+                  # Apply 90-degree clockwise rotation: (u,v) -> (v, 1-u)
+                  uv_layer[loop_index].uv.x = original_uv[1]
+                  uv_layer[loop_index].uv.y = 1.0 - original_uv[0]
 
               # --- Export Files ---
               print("✅ Object setup complete. Exporting files...")
