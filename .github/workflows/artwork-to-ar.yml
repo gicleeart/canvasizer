@@ -79,229 +79,112 @@ jobs:
       - name: Create Blender script
         run: |
           cat > scripts/make_ar_plane.py << 'PY'
-          import bpy, os
+          import bpy
+          import os
+          import math
 
-          # Env paths
+          # === 1. SETUP ===
+          # Get paths from environment variables passed by the YAML file
           img_path = os.environ["ARIP_IMAGE_PATH"]
           out_glb  = os.environ["ARIP_OUT_GLB"]
           out_usdz = os.environ["ARIP_OUT_USDZ"]
-          
-          # Ensure dirs exist
+
+          # Ensure output directories exist
           os.makedirs(os.path.dirname(out_glb), exist_ok=True)
           os.makedirs(os.path.dirname(out_usdz), exist_ok=True)
-          
-          # Clean scene
+
+          # Start with a clean, empty scene
           bpy.ops.wm.read_factory_settings(use_empty=True)
-          
-          # Panel dimensions
-          width_m = 1.50     # 1.5 M wide
-          depth_m = 0.02     # 2 cm thick
-          
-          # Load image and compute aspect
+
+          # === 2. CREATE GEOMETRY ===
+          # Define panel dimensions
+          width_m = 1.50   # 1.5 meters wide
+          depth_m = 0.02   # 2 cm thick
+
+          # Load the artwork image to determine its aspect ratio
           img = bpy.data.images.load(img_path)
           img.colorspace_settings.name = "sRGB"
-          aspect = (img.size[0] / img.size[1]) if img.size[1] else 1.0
-          height_m = width_m / aspect
-          
-          # Create front plane at origin
-          bpy.ops.mesh.primitive_plane_add(size=1.0, enter_editmode=False, location=(0, 0, 3.0))
+          aspect_ratio = (img.size[0] / img.size[1]) if img.size[1] > 0 else 1.0
+          height_m = width_m / aspect_ratio
+
+          # Create the initial plane
+          bpy.ops.mesh.primitive_plane_add(size=1.0, enter_editmode=False, location=(0, 0, 0))
           panel = bpy.context.active_object
           panel.name = "ArtPanel"
-         
-         
-          # Solidify for thickness (push back so front stays at z=0)
+
+          # Give it thickness using a solidify modifier
           mod = panel.modifiers.new(name="Solidify", type='SOLIDIFY')
           mod.thickness = depth_m
-          mod.offset = -1.0
+          mod.offset = 1.0 # Push thickness backwards from the front face
           bpy.ops.object.modifier_apply(modifier=mod.name)
 
-          # Scale to real size
+          # Scale the panel to the correct real-world dimensions
           panel.scale = (width_m / 2.0, height_m / 2.0, 1.0)
-          bpy.ops.object.transform_apply(scale=True, rotation=True, location=False)
-
-          # Tilt upright: rotate +90° around X so face points +Y
-          import math
+          bpy.ops.object.transform_apply(scale=True)
+          
+          # Rotate it to stand upright, facing forward
           panel.rotation_euler[0] = math.radians(90)
           bpy.ops.object.transform_apply(rotation=True)
-          
+
+          # === 3. CREATE AND ASSIGN MATERIALS ===
           mesh = panel.data
-          
-          # Ensure a UV layer
-          if not mesh.uv_layers:
-              mesh.uv_layers.new(name="UVMap")
-          uv_layer = mesh.uv_layers.active  # MeshUVLoopLayer
-          
-          # Materials
-          mat_front = bpy.data.materials.new("FrontArt")
+
+          # Create the main artwork material
+          mat_front = bpy.data.materials.new("ArtworkMaterial")
           mat_front.use_nodes = True
-          f_bsdf = mat_front.node_tree.nodes.get("Principled BSDF")
-          f_tex = mat_front.node_tree.nodes.new("ShaderNodeTexImage")
-          f_tex.image = img
-          f_tex.interpolation = "Smart"
-          f_tex.extension = "CLIP"  # no tiling past edges
-          mat_front.node_tree.links.new(f_tex.outputs["Color"], f_bsdf.inputs["Base Color"])
-          f_bsdf.inputs["Roughness"].default_value = 0.7
-          f_bsdf.inputs["Metallic"].default_value = 0.0
+          bsdf_front = mat_front.node_tree.nodes.get("Principled BSDF")
+          tex_node = mat_front.node_tree.nodes.new("ShaderNodeTexImage")
+          tex_node.image = img
+          # This link is critical - it applies the texture to the material
+          mat_front.node_tree.links.new(tex_node.outputs["Color"], bsdf_front.inputs["Base Color"])
+          bsdf_front.inputs["Roughness"].default_value = 0.8
           
-          mat_side = bpy.data.materials.new("SideMat")
+          # Create a simple white material for the sides and back
+          mat_side = bpy.data.materials.new("SideMaterial")
           mat_side.use_nodes = True
-          s_bsdf = mat_side.node_tree.nodes.get("Principled BSDF")
-          s_bsdf.inputs["Base Color"].default_value = (1.0, 1.0, 1.0, 1.0)  # pure white
-          s_bsdf.inputs["Roughness"].default_value = 0.9
-          s_bsdf.inputs["Metallic"].default_value = 0.0
-          
-          # Assign material slots: 0 = front, 1 = sides/back
-          mesh.materials.clear()
-          mesh.materials.append(mat_front)
-          mesh.materials.append(mat_side)
-          
-          # Default all faces to side material
+          bsdf_side = mat_side.node_tree.nodes.get("Principled BSDF")
+          bsdf_side.inputs["Base Color"].default_value = (0.9, 0.9, 0.9, 1.0) # Light grey
+          bsdf_side.inputs["Roughness"].default_value = 0.9
+
+          # Add both materials to the object
+          mesh.materials.append(mat_front) # Material slot 0
+          mesh.materials.append(mat_side)  # Material slot 1
+
+          # Assign the side material to all faces by default
           for poly in mesh.polygons:
               poly.material_index = 1
-          
-          # Pick the front face (largest +Y quad)
-          import mathutils
+              
+          # Find the front-facing polygon (the one with the largest positive Y normal)
+          front_face = max([p for p in mesh.polygons], key=lambda p: p.normal.y)
+          # Assign the artwork material to just the front face
+          front_face.material_index = 0
 
-          # Find the "front" face (as before)
-          candidates = [p for p in mesh.polygons if p.normal.y > 0.5]
-          front_face = max(candidates, key=lambda p: p.area) if candidates else max(mesh.polygons, key=lambda p: p.center.y)
-          
-          # Find the *opposite* face whose normal is ~180° from the front's
-          opposite_face = None
-          for p in mesh.polygons:
-              if p != front_face and p.normal.dot(front_face.normal) < -0.9999:
-                  opposite_face = p
-                  break
-          
-          # If found, use that as the artwork face; otherwise fall back to front_face
-          target_face = opposite_face if opposite_face else front_face
-          target_face.material_index = 0
-          
-          # Planar UVs for the front face: fill 0..1 using local X/Y extents
-          def rotate_texture_180(mesh, face, uv_layer):
-              """
-              Rotate the texture 180 degrees on a specific face by flipping both UV axes.
-              mesh: bpy.types.Mesh
-              face: bpy.types.MeshPolygon (target face)
-              uv_layer: bpy.types.MeshUVLoopLayer (mesh.uv_layers.active)
-              """
-              # Build planar 0..1 UVs from local X/Y extents, then invert both axes
-              xs, ys = [], []
-              for li in face.loop_indices:
-                  v = mesh.vertices[mesh.loops[li].vertex_index]
-                  xs.append(v.co.x); ys.append(v.co.y)
-              min_x, max_x = min(xs), max(xs)
-              min_y, max_y = min(ys), max(ys)
-              dx = (max_x - min_x) or 1.0
-              dy = (max_y - min_y) or 1.0
-          
-              for li in face.loop_indices:
-                  v = mesh.vertices[mesh.loops[li].vertex_index]
-                  uv = uv_layer.data[li].uv
-                  u = (v.co.x - min_x) / dx
-                  v_ = (v.co.y - min_y) / dy
-                  uv.x = 1.0 - u
-                  uv.y = 1.0 - v_
-          
-          # Export GLB (embedded textures)
+          # === 4. UNIFIED EXPORT LOGIC ===
+          # For clean exports, deselect everything first, then select only our panel
+          bpy.ops.object.select_all(action='DESELECT')
+          panel.select_set(True)
+          bpy.context.view_layer.objects.active = panel
+
+          # Export to GLB
+          print(f"📦 Exporting GLB to {out_glb}...")
           bpy.ops.export_scene.gltf(
               filepath=out_glb,
               export_format='GLB',
-              export_image_format='AUTO',
+              use_selection=True,
               export_yup=True,
-              export_apply=True,
-              export_texcoords=True,
-              export_normals=True,
-              export_materials='EXPORT',
-              use_selection=False
+              export_apply=True
           )
-          
-          # Export USDZ
-          import os
+          print("✅ GLB export complete.")
 
-          # Select all objects to ensure export includes them
-          for obj in bpy.context.scene.objects:
-              obj.select_set(True)
-          bpy.context.view_layer.objects.active = panel
-
-          # Confirm texture format is compatible
-          img_ext = os.path.splitext(img_path)[1].lower()
-          if img_ext not in [".png", ".jpg", ".jpeg"]:
-              print(f"⚠️ Texture format {img_ext} may not be USDZ-compatible")
-
-          # Export USDZ
-          
-          import os
-          from PIL import Image
-          import bpy
-          
-          # === CONFIG ===
-          img_path = "assets/artwork.png"
-          out_usdz = "output/artwork.usdz"
-          
-          # === Convert texture if needed ===
-          def ensure_jpeg_texture(path):
-              ext = os.path.splitext(path)[1].lower()
-              if ext not in [".jpg", ".jpeg", ".png"]:
-                  print(f"Converting {path} to JPEG...")
-                  img = Image.open(path).convert("RGB")
-                  new_path = path.replace(ext, ".jpg")
-                  img.save(new_path, "JPEG")
-                  return new_path
-              return path
-          
-          img_path = ensure_jpeg_texture(img_path)
-          
-          # === Load image and pack ===
-          img = bpy.data.images.load(img_path)
-          img.pack()
-          print(f"Loaded and packed texture: {img.filepath}")
-          
-          # === Create material ===
-          mat = bpy.data.materials.new(name="ArtworkMaterial")
-          mat.use_nodes = True
-          nodes = mat.node_tree.nodes
-          tex_node = nodes.new(type='ShaderNodeTexImage')
-          tex_node.image = img
-          
-          # === Create mesh ===
-          mesh = bpy.data.meshes.new("ArtworkMesh")
-          obj = bpy.data.objects.new("Artwork", mesh)
-          bpy.context.collection.objects.link(obj)
-          bpy.context.view_layer.objects.active = obj
-          obj.select_set(True)
-          
-          # === Define geometry ===
-          verts = [(-1, -1, 0), (1, -1, 0), (1, 1, 0), (-1, 1, 0)]
-          faces = [(0, 1, 2, 3)]
-          mesh.from_pydata(verts, [], faces)
-          mesh.update()
-          
-          # === Apply UVs ===
-          bpy.ops.object.mode_set(mode='EDIT')
-          bpy.ops.uv.smart_project()
-          bpy.ops.object.mode_set(mode='OBJECT')
-          
-          # === Assign material ===
-          obj.data.materials.append(mat)
-          
-          # === Export USDZ ===
-          bpy.ops.wm.usd_export(filepath=out_usdz, export_textures=True)
-          print(f"Exported USDZ: {out_usdz}")
-          
-          # === Validate export ===
-          usdz_size = os.path.getsize(out_usdz) if os.path.exists(out_usdz) else 0
-          if usdz_size < 10_000:
-              print(f"⚠️ USDZ file is suspiciously small ({usdz_size} bytes) — falling back to USDA export")
-              fallback_usda = out_usdz.replace(".usdz", ".usda")
-              bpy.ops.wm.usd_export(
-                  filepath=fallback_usda,
-                  export_format='USD',
-                  export_materials=True,
-                  export_textures=True,
-                  selected_objects_only=False
-              )
-              print(f"✅ Fallback USDA export complete: {fallback_usda}")
+          # Export the exact same selected object to USDZ
+          print(f"📦 Exporting USDZ to {out_usdz}...")
+          bpy.ops.wm.usd_export(
+              filepath=out_usdz,
+              selected_objects_only=True,
+              export_textures=True,
+              export_materials=True
+          )
+          print("✅ USDZ export complete.")
 
           PY
 
