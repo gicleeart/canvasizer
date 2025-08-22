@@ -171,6 +171,12 @@ jobs:
           echo "✅ Artifacts staged:"
           ls -la public_models
 
+      - name: Upload AR artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: artwork-ar
+          path: public_models/*    
+
       - name: Commit artifacts to repo
         run: |
           git config user.name "github-actions[bot]"
