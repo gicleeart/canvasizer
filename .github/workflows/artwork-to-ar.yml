@@ -93,41 +93,37 @@ jobs:
 
           bpy.ops.wm.read_factory_settings(use_empty=True)
 
-          # === 2. CREATE GEOMETRY & LOAD IMAGE ===
-          width_m = 1.50
-          depth_m = 0.02
-
-          # Load the image using the full, absolute path provided. This is reliable.
+          # === 2. LOAD IMAGE AND PACK IT ===
           img = bpy.data.images.load(img_path)
           img.colorspace_settings.name = "sRGB"
+          
+          # **CRITICAL CHANGE #1:** Pack the image data directly into the Blender instance.
+          # This removes any dependency on the file path during export.
+          img.pack()
+          print(f"Texture '{os.path.basename(img_path)}' has been packed.")
 
+          # === 3. CREATE GEOMETRY ===
+          width_m = 1.50
+          depth_m = 0.02
           aspect_ratio = (img.size[0] / img.size[1]) if img.size[1] > 0 else 1.0
           height_m = width_m / aspect_ratio
 
-          # This plane is created with a perfect 0-1 UV map by default. We'll rely on this.
           bpy.ops.mesh.primitive_plane_add(size=1.0, enter_editmode=False, location=(0, 0, 0))
           panel = bpy.context.active_object
           panel.name = "ArtPanel"
 
-          # Give the panel thickness
           mod = panel.modifiers.new(name="Solidify", type='SOLIDIFY')
           mod.thickness = depth_m
           mod.offset = 1.0
           bpy.ops.object.modifier_apply(modifier=mod.name)
 
-          # Scale and rotate into position
           panel.scale = (width_m / 2.0, height_m / 2.0, 1.0)
           bpy.ops.object.transform_apply(scale=True)
           panel.rotation_euler[0] = math.radians(90)
           bpy.ops.object.transform_apply(rotation=True)
 
-          # === 3. ROBUST MATERIAL SETUP ===
+          # === 4. SIMPLIFIED MATERIAL SETUP ===
           mesh = panel.data
-          
-          # Get the name of the default UV map created with the plane
-          uv_layer_name = mesh.uv_layers.active.name
-
-          # Create the artwork material
           mat_front = bpy.data.materials.new("ArtworkMaterial")
           mat_front.use_nodes = True
           nodes = mat_front.node_tree.nodes
@@ -135,52 +131,34 @@ jobs:
           tex_node = nodes.new("ShaderNodeTexImage")
           tex_node.image = img
           
-          # Explicitly connect the UV map to the texture for the USDZ exporter
-          uv_map_node = nodes.new(type='ShaderNodeUVMap')
-          uv_map_node.uv_map = uv_layer_name
-          mat_front.node_tree.links.new(uv_map_node.outputs['UV'], tex_node.inputs['Vector'])
+          # **CRITICAL CHANGE #2:** Use the simplest node connection.
+          # The Image Texture node will automatically use the default UV map.
           mat_front.node_tree.links.new(tex_node.outputs['Color'], bsdf_front.inputs['Base Color'])
           bsdf_front.inputs["Roughness"].default_value = 0.8
           
-          # Create the material for the sides/back
           mat_side = bpy.data.materials.new("SideMaterial")
-          mat_side.use_nodes = True
           bsdf_side = mat_side.node_tree.nodes.get("Principled BSDF")
           bsdf_side.inputs["Base Color"].default_value = (0.9, 0.9, 0.9, 1.0)
-          bsdf_side.inputs["Roughness"].default_value = 0.9
 
-          # Assign materials to faces
-          mesh.materials.append(mat_front) # Slot 0
-          mesh.materials.append(mat_side)  # Slot 1
+          mesh.materials.append(mat_front)
+          mesh.materials.append(mat_side)
 
           for poly in mesh.polygons:
               poly.material_index = 1
-              
           front_face = max([p for p in mesh.polygons], key=lambda p: p.normal.y)
           front_face.material_index = 0
 
-          # === 4. UNIFIED EXPORT LOGIC ===
+          # === 5. EXPORT LOGIC ===
           bpy.ops.object.select_all(action='DESELECT')
           panel.select_set(True)
           bpy.context.view_layer.objects.active = panel
 
           print(f"📦 Exporting GLB to {out_glb}...")
-          bpy.ops.export_scene.gltf(
-              filepath=out_glb,
-              export_format='GLB',
-              use_selection=True,
-              export_yup=True
-          )
+          bpy.ops.export_scene.gltf(filepath=out_glb, export_format='GLB', use_selection=True, export_yup=True)
           print("✅ GLB export complete.")
 
           print(f"📦 Exporting USDZ to {out_usdz}...")
-          bpy.ops.wm.usd_export(
-              filepath=out_usdz,
-              selected_objects_only=True,
-              export_textures=True,
-              export_materials=True,        # Be explicit about exporting materials
-              relative_paths=False          # <-- THIS IS THE CRITICAL CHANGE
-          )
+          bpy.ops.wm.usd_export(filepath=out_usdz, selected_objects_only=True, export_textures=True, relative_paths=False)
           print("✅ USDZ export complete.")
 
           PY
