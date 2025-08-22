@@ -17,15 +17,18 @@ jobs:
         uses: actions/cache@v3
         with:
           path: blender
-          key: blender-macos-3.6.5  # or whatever version you're using
+          # Use a new key for the new version
+          key: blender-macos-4.2.0
 
       - name: Download Blender manually (if not cached)
         run: |
           mkdir -p blender
-          if [ ! -f blender/blender.app/Contents/MacOS/Blender ]; then
-            echo "⬇️ Downloading Blender..."
-            curl -L https://mirror.clarkson.edu/blender/release/Blender3.6/blender-3.6.5-macos-x64.dmg -o blender/blender.dmg
+          if [ ! -f blender/Blender.app/Contents/MacOS/Blender ]; then
+            echo "⬇️ Downloading Blender 4.2.0..."
+            # Use the URL for the new version
+            curl -L https://mirror.clarkson.edu/blender/release/Blender4.2/blender-4.2.0-macos-x64.dmg -o blender/blender.dmg
             hdiutil attach blender/blender.dmg -mountpoint /Volumes/Blender
+            # The app name inside the DMG is now just "Blender.app"
             cp -R "/Volumes/Blender/Blender.app" blender/
             hdiutil detach /Volumes/Blender
           else
