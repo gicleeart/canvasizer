@@ -177,7 +177,9 @@ jobs:
           bpy.ops.wm.usd_export(
               filepath=out_usdz,
               selected_objects_only=True,
-              export_textures=True
+              export_textures=True,
+              export_materials=True,        # Be explicit about exporting materials
+              relative_paths=False          # <-- THIS IS THE CRITICAL CHANGE
           )
           print("✅ USDZ export complete.")
 
