@@ -89,7 +89,6 @@ jobs:
           import math
 
           # === 1. SETUP ===
-          # The path received from the YAML will now be the .jpg
           img_path = os.environ["ARIP_IMAGE_PATH"]
           out_glb  = os.environ["ARIP_OUT_GLB"]
           out_usdz = os.environ["ARIP_OUT_USDZ"]
@@ -124,7 +123,13 @@ jobs:
 
           # === 3. MATERIAL SETUP ===
           mesh = panel.data
+          
+          # ✅ CRITICAL FIX: Defensively check for a UV layer before accessing it.
+          # This prevents the script from crashing if no layer is "active".
+          if not mesh.uv_layers:
+              mesh.uv_layers.new(name="UVMap")
           uv_layer_name = mesh.uv_layers.active.name
+          
           mat_front = bpy.data.materials.new("ArtworkMaterial")
           mat_front.use_nodes = True
           nodes = mat_front.node_tree.nodes
