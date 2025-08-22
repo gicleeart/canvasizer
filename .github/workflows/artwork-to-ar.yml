@@ -104,58 +104,50 @@ jobs:
           # === 2. GEOMETRY AND IMAGE LOADING ===
           img = bpy.data.images.load(img_path)
           
-          # We'll use Non-Color as the base, and manually correct from there.
-          img.colorspace_settings.name = "Non-Color"
+          # ✅ THE FINAL FIX: Tell Blender to pass the raw color data through.
+          img.colorspace_settings.name = "sRGB OETF"
 
           width_m = 1.50
-          # ... (rest of geometry code is the same) ...
           depth_m = 0.02
           aspect_ratio = (img.size[0] / img.size[1]) if img.size[1] > 0 else 1.0
           height_m = width_m / aspect_ratio
+
           bpy.ops.mesh.primitive_plane_add(size=1.0, enter_editmode=False, location=(0, 0, 0))
           panel = bpy.context.active_object
           panel.name = "ArtPanel"
+
           mod = panel.modifiers.new(name="Solidify", type='SOLIDIFY')
           mod.thickness = depth_m
           mod.offset = 1.0
           bpy.ops.object.modifier_apply(modifier=mod.name)
+
           panel.scale = (width_m / 2.0, height_m / 2.0, 1.0)
           bpy.ops.object.transform_apply(scale=True)
           panel.rotation_euler[0] = math.radians(90)
           bpy.ops.object.transform_apply(rotation=True)
 
-          # === 3. MATERIAL SETUP WITH COLOR CORRECTION ===
+          # === 3. RADICALLY SIMPLIFIED MATERIAL SETUP ===
           mesh = panel.data
           mat_artwork = bpy.data.materials.new("ArtworkMaterial")
           mat_artwork.use_nodes = True
           nodes = mat_artwork.node_tree.nodes
-          links = mat_artwork.node_tree.links
           bsdf = nodes.get("Principled BSDF")
           tex_node = nodes.new("ShaderNodeTexImage")
           tex_node.image = img
           
-          # Create a Color Balance node to tweak the output
-          color_balance_node = nodes.new(type='ShaderNodeBalance')
-          
-          # TWEAK THESE VALUES TO GET A PERFECT MATCH
-          # To reduce warmth, slightly increase the blue value (the third number).
-          # A good starting point is 1.05. You can try 1.1 for a stronger effect.
-          color_balance_node.inputs[4].default_value = (1.0, 1.0, 1.10) # GAIN (R, G, B)
-
-          # Connect the nodes: Texture -> Color Balance -> Shader
-          links.new(tex_node.outputs['Color'], color_balance_node.inputs['Color'])
-          links.new(color_balance_node.outputs['Color'], bsdf.inputs['Base Color'])
+          mat_artwork.node_tree.links.new(tex_node.outputs['Color'], bsdf.inputs['Base Color'])
           
           mesh.materials.append(mat_artwork)
 
           # === 4. EXPORT LOGIC ===
-          # ... (export code is the same) ...
           bpy.ops.object.select_all(action='DESELECT')
           panel.select_set(True)
           bpy.context.view_layer.objects.active = panel
+
           print(f"📦 Exporting GLB to {out_glb}...")
           bpy.ops.export_scene.gltf(filepath=out_glb, export_format='GLB', use_selection=True, export_yup=True)
           print("✅ GLB export complete.")
+
           print(f"📦 Exporting USDZ to {out_usdz}...")
           bpy.ops.wm.usd_export(filepath=out_usdz, selected_objects_only=True, export_textures=True, relative_paths=False)
           print("✅ USDZ export complete.")
