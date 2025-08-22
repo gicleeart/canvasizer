@@ -101,9 +101,11 @@ jobs:
 
           bpy.ops.wm.read_factory_settings(use_empty=True)
 
-          # === 2. GEOMETRY AND IMAGE LOADING (UNCHANGED) ===
+          # === 2. GEOMETRY AND IMAGE LOADING ===
           img = bpy.data.images.load(img_path)
-          img.colorspace_settings.name = "sRGB"
+          
+          # ✅ THE FINAL FIX: Tell Blender to pass the raw color data through.
+          img.colorspace_settings.name = "Non-Color"
 
           width_m = 1.50
           depth_m = 0.02
@@ -126,8 +128,6 @@ jobs:
 
           # === 3. RADICALLY SIMPLIFIED MATERIAL SETUP ===
           mesh = panel.data
-          
-          # Create one single material.
           mat_artwork = bpy.data.materials.new("ArtworkMaterial")
           mat_artwork.use_nodes = True
           nodes = mat_artwork.node_tree.nodes
@@ -135,13 +135,11 @@ jobs:
           tex_node = nodes.new("ShaderNodeTexImage")
           tex_node.image = img
           
-          # Use the most basic connection. The texture node will find the default UV map.
           mat_artwork.node_tree.links.new(tex_node.outputs['Color'], bsdf.inputs['Base Color'])
           
-          # Apply this one material to the entire object. No loops or face selection.
           mesh.materials.append(mat_artwork)
 
-          # === 4. EXPORT LOGIC (UNCHANGED) ===
+          # === 4. EXPORT LOGIC ===
           bpy.ops.object.select_all(action='DESELECT')
           panel.select_set(True)
           bpy.context.view_layer.objects.active = panel
