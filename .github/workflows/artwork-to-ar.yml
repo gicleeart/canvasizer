@@ -84,88 +84,91 @@ jobs:
           import math
 
           # === 1. SETUP ===
-          # Get paths from environment variables passed by the YAML file
           img_path = os.environ["ARIP_IMAGE_PATH"]
           out_glb  = os.environ["ARIP_OUT_GLB"]
           out_usdz = os.environ["ARIP_OUT_USDZ"]
 
-          # Ensure output directories exist
           os.makedirs(os.path.dirname(out_glb), exist_ok=True)
           os.makedirs(os.path.dirname(out_usdz), exist_ok=True)
 
-          # Start with a clean, empty scene
           bpy.ops.wm.read_factory_settings(use_empty=True)
 
           # === 2. CREATE GEOMETRY ===
-          # Define panel dimensions
-          width_m = 1.50   # 1.5 meters wide
-          depth_m = 0.02   # 2 cm thick
+          width_m = 1.50
+          depth_m = 0.02
 
-          # Load the artwork image to determine its aspect ratio
           img = bpy.data.images.load(img_path)
           img.colorspace_settings.name = "sRGB"
+          
+          # Force a relative path, which is more robust for exports
+          img.filepath = f"//{os.path.basename(img_path)}"
+
           aspect_ratio = (img.size[0] / img.size[1]) if img.size[1] > 0 else 1.0
           height_m = width_m / aspect_ratio
 
-          # Create the initial plane
           bpy.ops.mesh.primitive_plane_add(size=1.0, enter_editmode=False, location=(0, 0, 0))
           panel = bpy.context.active_object
           panel.name = "ArtPanel"
 
-          # Give it thickness using a solidify modifier
           mod = panel.modifiers.new(name="Solidify", type='SOLIDIFY')
           mod.thickness = depth_m
-          mod.offset = 1.0 # Push thickness backwards from the front face
+          mod.offset = 1.0
           bpy.ops.object.modifier_apply(modifier=mod.name)
 
-          # Scale the panel to the correct real-world dimensions
           panel.scale = (width_m / 2.0, height_m / 2.0, 1.0)
           bpy.ops.object.transform_apply(scale=True)
           
-          # Rotate it to stand upright, facing forward
           panel.rotation_euler[0] = math.radians(90)
           bpy.ops.object.transform_apply(rotation=True)
 
-          # === 3. CREATE AND ASSIGN MATERIALS ===
+          # === 3. EXPLICIT UV UNWRAPPING ===
           mesh = panel.data
+          bpy.context.view_layer.objects.active = panel
+          bpy.ops.object.mode_set(mode='EDIT')
+          bpy.ops.mesh.select_all(action='SELECT')
+          # This is a robust way to ensure UVs are generated
+          bpy.ops.uv.smart_project() 
+          bpy.ops.object.mode_set(mode='OBJECT')
+          
+          # Get the active UV map to reference in the shader
+          uv_layer_name = mesh.uv_layers.active.name
 
-          # Create the main artwork material
+          # === 4. ROBUST MATERIAL SETUP ===
           mat_front = bpy.data.materials.new("ArtworkMaterial")
           mat_front.use_nodes = True
-          bsdf_front = mat_front.node_tree.nodes.get("Principled BSDF")
-          tex_node = mat_front.node_tree.nodes.new("ShaderNodeTexImage")
+          nodes = mat_front.node_tree.nodes
+          bsdf_front = nodes.get("Principled BSDF")
+          tex_node = nodes.new("ShaderNodeTexImage")
           tex_node.image = img
-          # This link is critical - it applies the texture to the material
-          mat_front.node_tree.links.new(tex_node.outputs["Color"], bsdf_front.inputs["Base Color"])
+          
+          # **NEW:** Create a UV Map node to explicitly tell the texture which UVs to use
+          uv_map_node = nodes.new(type='ShaderNodeUVMap')
+          uv_map_node.uv_map = uv_layer_name
+          # Connect: UV Map -> Image Texture -> Shader
+          mat_front.node_tree.links.new(uv_map_node.outputs['UV'], tex_node.inputs['Vector'])
+          mat_front.node_tree.links.new(tex_node.outputs['Color'], bsdf_front.inputs['Base Color'])
           bsdf_front.inputs["Roughness"].default_value = 0.8
           
-          # Create a simple white material for the sides and back
           mat_side = bpy.data.materials.new("SideMaterial")
           mat_side.use_nodes = True
           bsdf_side = mat_side.node_tree.nodes.get("Principled BSDF")
-          bsdf_side.inputs["Base Color"].default_value = (0.9, 0.9, 0.9, 1.0) # Light grey
+          bsdf_side.inputs["Base Color"].default_value = (0.9, 0.9, 0.9, 1.0)
           bsdf_side.inputs["Roughness"].default_value = 0.9
 
-          # Add both materials to the object
-          mesh.materials.append(mat_front) # Material slot 0
-          mesh.materials.append(mat_side)  # Material slot 1
+          mesh.materials.append(mat_front)
+          mesh.materials.append(mat_side)
 
-          # Assign the side material to all faces by default
           for poly in mesh.polygons:
               poly.material_index = 1
               
-          # Find the front-facing polygon (the one with the largest positive Y normal)
           front_face = max([p for p in mesh.polygons], key=lambda p: p.normal.y)
-          # Assign the artwork material to just the front face
           front_face.material_index = 0
 
-          # === 4. UNIFIED EXPORT LOGIC ===
-          # For clean exports, deselect everything first, then select only our panel
+          # === 5. UNIFIED EXPORT LOGIC ===
           bpy.ops.object.select_all(action='DESELECT')
           panel.select_set(True)
           bpy.context.view_layer.objects.active = panel
 
-          # Export to GLB
           print(f"📦 Exporting GLB to {out_glb}...")
           bpy.ops.export_scene.gltf(
               filepath=out_glb,
@@ -176,7 +179,6 @@ jobs:
           )
           print("✅ GLB export complete.")
 
-          # Export the exact same selected object to USDZ
           print(f"📦 Exporting USDZ to {out_usdz}...")
           bpy.ops.wm.usd_export(
               filepath=out_usdz,
