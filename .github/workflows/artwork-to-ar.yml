@@ -76,6 +76,11 @@ jobs:
           echo "Tree before conversion:"
           find . -maxdepth 3 -type f
 
+      - name: Convert artwork to JPEG for maximum compatibility
+        run: |
+          sips -s format jpeg assets/artwork.png --out assets/artwork.jpg
+          echo "ARIP_IMAGE_PATH_FINAL=${{ github.workspace }}/assets/artwork.jpg" >> $GITHUB_ENV
+          
       - name: Create Blender script
         run: |
           cat > scripts/make_ar_plane.py << 'PY'
@@ -84,6 +89,7 @@ jobs:
           import math
 
           # === 1. SETUP ===
+          # The path received from the YAML will now be the .jpg
           img_path = os.environ["ARIP_IMAGE_PATH"]
           out_glb  = os.environ["ARIP_OUT_GLB"]
           out_usdz = os.environ["ARIP_OUT_USDZ"]
@@ -93,16 +99,10 @@ jobs:
 
           bpy.ops.wm.read_factory_settings(use_empty=True)
 
-          # === 2. LOAD IMAGE AND PACK IT ===
+          # === 2. GEOMETRY AND IMAGE LOADING ===
           img = bpy.data.images.load(img_path)
           img.colorspace_settings.name = "sRGB"
-          
-          # **CRITICAL CHANGE #1:** Pack the image data directly into the Blender instance.
-          # This removes any dependency on the file path during export.
-          img.pack()
-          print(f"Texture '{os.path.basename(img_path)}' has been packed.")
 
-          # === 3. CREATE GEOMETRY ===
           width_m = 1.50
           depth_m = 0.02
           aspect_ratio = (img.size[0] / img.size[1]) if img.size[1] > 0 else 1.0
@@ -122,8 +122,9 @@ jobs:
           panel.rotation_euler[0] = math.radians(90)
           bpy.ops.object.transform_apply(rotation=True)
 
-          # === 4. SIMPLIFIED MATERIAL SETUP ===
+          # === 3. MATERIAL SETUP ===
           mesh = panel.data
+          uv_layer_name = mesh.uv_layers.active.name
           mat_front = bpy.data.materials.new("ArtworkMaterial")
           mat_front.use_nodes = True
           nodes = mat_front.node_tree.nodes
@@ -131,8 +132,9 @@ jobs:
           tex_node = nodes.new("ShaderNodeTexImage")
           tex_node.image = img
           
-          # **CRITICAL CHANGE #2:** Use the simplest node connection.
-          # The Image Texture node will automatically use the default UV map.
+          uv_map_node = nodes.new(type='ShaderNodeUVMap')
+          uv_map_node.uv_map = uv_layer_name
+          mat_front.node_tree.links.new(uv_map_node.outputs['UV'], tex_node.inputs['Vector'])
           mat_front.node_tree.links.new(tex_node.outputs['Color'], bsdf_front.inputs['Base Color'])
           bsdf_front.inputs["Roughness"].default_value = 0.8
           
@@ -148,7 +150,7 @@ jobs:
           front_face = max([p for p in mesh.polygons], key=lambda p: p.normal.y)
           front_face.material_index = 0
 
-          # === 5. EXPORT LOGIC ===
+          # === 4. EXPORT LOGIC ===
           bpy.ops.object.select_all(action='DESELECT')
           panel.select_set(True)
           bpy.context.view_layer.objects.active = panel
