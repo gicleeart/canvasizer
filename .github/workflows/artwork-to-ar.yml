@@ -5,7 +5,7 @@ on:
     types: [canvasizer_trigger]
 
 permissions:
-  contents: write  # allow pushes to main
+  contents: write
 
 jobs:
   build-ar:
@@ -17,7 +17,6 @@ jobs:
         uses: actions/cache@v3
         with:
           path: blender
-          # Use a new key for the new version
           key: blender-macos-4.2.0
 
       - name: Download Blender manually (if not cached)
@@ -25,86 +24,49 @@ jobs:
           mkdir -p blender
           if [ ! -f blender/Blender.app/Contents/MacOS/Blender ]; then
             echo "⬇️ Downloading Blender 4.2.0..."
-            # Use the URL for the new version
             curl -L https://mirror.clarkson.edu/blender/release/Blender4.2/blender-4.2.0-macos-x64.dmg -o blender/blender.dmg
             hdiutil attach blender/blender.dmg -mountpoint /Volumes/Blender
-            # The app name inside the DMG is now just "Blender.app"
             cp -R "/Volumes/Blender/Blender.app" blender/
             hdiutil detach /Volumes/Blender
           else
             echo "✅ Blender already cached"
           fi
-      - name: Cache USD repo
-        uses: actions/cache@v3
-        with:
-          path: USD
-          key: usd-repo-${{ runner.os }}-${{ hashFiles('USD/.git/HEAD') }}
-          restore-keys: |
-            usd-repo-${{ runner.os }}-
-      
-      - name: Clone USD (shallow if missing)
-        run: |
-          if [ ! -d "USD" ]; then
-            git clone --depth 1 https://github.com/PixarAnimationStudios/USD.git
-          fi
-      
-      - name: Cache USD build
-        uses: actions/cache@v3
-        with:
-          path: ${{ github.workspace }}/usd-tools
-          key: usd-build-${{ runner.os }}-${{ hashFiles('USD/build_scripts/build_usd.py') }}
-          restore-keys: |
-            usd-build-${{ runner.os }}-
-      
-      - name: Build USD tools (skip if already built)
-        run: |
-          if [ -f "${{ github.workspace }}/usd-tools/bin/usdzip" ]; then
-            echo "✅ USD tools already built — skipping build"
-          else
-            cd USD
-            python build_scripts/build_usd.py ${{ github.workspace }}/usd-tools --no-usdview --no-tests --no-imaging
-          fi
+
       - name: Download artwork
         run: |
           mkdir -p assets scripts output
           curl -L "${{ github.event.client_payload.image_url }}" -o assets/artwork.png
-      - name: Preflight debug
-        run: |
-          set -euxo pipefail
-          pwd
-          ls -la
-          echo "Tree before conversion:"
-          find . -maxdepth 3 -type f
+
       - name: Convert artwork to JPEG for maximum compatibility
         run: |
           sips -s format jpeg assets/artwork.png --out assets/artwork.jpg
-          echo "ARIP_IMAGE_PATH_FINAL=${{ github.workspace }}/assets/artwork.jpg" >> $GITHUB_ENV
-          
+
       - name: Create Blender script
         run: |
           cat > scripts/make_ar_plane.py << 'PY'
           import bpy
           import os
           import math
-          # === 1. SETUP ===
+
           img_path = os.environ["ARIP_IMAGE_PATH"]
           out_glb  = os.environ["ARIP_OUT_GLB"]
           out_usdz = os.environ["ARIP_OUT_USDZ"]
           os.makedirs(os.path.dirname(out_glb), exist_ok=True)
           os.makedirs(os.path.dirname(out_usdz), exist_ok=True)
           bpy.ops.wm.read_factory_settings(use_empty=True)
-          # === 2. GEOMETRY AND IMAGE LOADING ===
+
           img = bpy.data.images.load(img_path)
-          
-          # ✅ THE FINAL FIX: Tell Blender to pass the raw color data through.
           img.colorspace_settings.name = "sRGB"
+
           width_m = 1.50
           depth_m = 0.02
           aspect_ratio = (img.size[0] / img.size[1]) if img.size[1] > 0 else 1.0
           height_m = width_m / aspect_ratio
+
           bpy.ops.mesh.primitive_plane_add(size=1.0, enter_editmode=False, location=(0, 0, 0))
           panel = bpy.context.active_object
           panel.name = "ArtPanel"
+
           mod = panel.modifiers.new(name="Solidify", type='SOLIDIFY')
           mod.thickness = depth_m
           mod.offset = 1.0
@@ -113,7 +75,7 @@ jobs:
           bpy.ops.object.transform_apply(scale=True)
           panel.rotation_euler[0] = math.radians(90)
           bpy.ops.object.transform_apply(rotation=True)
-          # === 3. RADICALLY SIMPLIFIED MATERIAL SETUP ===
+
           mesh = panel.data
           mat_artwork = bpy.data.materials.new("ArtworkMaterial")
           mat_artwork.use_nodes = True
@@ -121,54 +83,34 @@ jobs:
           bsdf = nodes.get("Principled BSDF")
           tex_node = nodes.new("ShaderNodeTexImage")
           tex_node.image = img
-          
           mat_artwork.node_tree.links.new(tex_node.outputs['Color'], bsdf.inputs['Base Color'])
-          
           mesh.materials.append(mat_artwork)
-          # === 4. EXPORT LOGIC ===
+
           bpy.ops.object.select_all(action='DESELECT')
           panel.select_set(True)
           bpy.context.view_layer.objects.active = panel
+
           print(f"📦 Exporting GLB to {out_glb}...")
           bpy.ops.export_scene.gltf(filepath=out_glb, export_format='GLB', use_selection=True, export_yup=True)
           print("✅ GLB export complete.")
+
           print(f"📦 Exporting USDZ to {out_usdz}...")
           bpy.ops.wm.usd_export(filepath=out_usdz, selected_objects_only=True, export_textures=True, relative_paths=False)
           print("✅ USDZ export complete.")
           PY
+
       - name: Run Blender headless
         env:
-          ARIP_IMAGE_PATH: ${{ github.workspace }}/assets/artwork.png
-          ARIP_OUT_GLB:   ${{ github.workspace }}/output/artwork.glb
-          ARIP_OUT_USDZ:  ${{ github.workspace }}/output/artwork.usdz
-        run: blender/blender.app/Contents/MacOS/Blender -b -noaudio --python scripts/make_ar_plane.py
+          ARIP_IMAGE_PATH: ${{ github.workspace }}/assets/artwork.jpg
+          ARIP_OUT_GLB:    ${{ github.workspace }}/output/artwork.glb
+          ARIP_OUT_USDZ:   ${{ github.workspace }}/output/artwork.usdz
+        run: blender/Blender.app/Contents/MacOS/Blender -b -noaudio --python scripts/make_ar_plane.py
 
-      - name: Inspect post‑Blender output
-        run: |
-          set -euxo pipefail
-          echo "Tree after Blender:"
-          find . -maxdepth 4 -type f
       - name: Normalize and stage artifacts
         run: |
-          set -euxo pipefail
           mkdir -p public_models
-          shopt -s nullglob nocaseglob
-          files=(output/*.{glb,usdz})
-          if [ ${#files[@]} -eq 0 ]; then
-            echo "❌ No 3D model files produced — aborting"
-            exit 1
-          fi
-          for f in "${files[@]}"; do
-            base=$(basename "$f")
-            lower=$(echo "$base" | tr '[:upper:]' '[:lower:]')
-            cp -v "$f" "public_models/$lower"
-          done
-          ls -la public_models
-      - name: Upload AR artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: artwork-ar
-          path: public_models/*
+          cp output/artwork.glb public_models/artwork.glb
+          cp output/artwork.usdz public_models/artwork.usdz
 
       - name: Commit artifacts to repo
         run: |
@@ -176,55 +118,28 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add public_models
           git commit -m "Add AR models for ${{ github.event.client_payload.title }}" || echo "No changes to commit"
-          git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
+          git push
+
       - name: POST back to WordPress (after HEAD check)
-        env:
-          WP_WEBHOOK_URL: ${{ secrets.WP_WEBHOOK_URL }}
-          WP_WEBHOOK_TOKEN: ${{ secrets.WP_WEBHOOK_TOKEN }}
         run: |
-          GLB_PATH="public_models/artwork.glb"
-          USDZ_PATH="public_models/artwork.usdz"
-          GLB_URL=""
-          USDZ_URL=""
-          if [ -f "$GLB_PATH" ]; then
-            GLB_URL="https://raw.githubusercontent.com/${{ github.repository }}/main/$GLB_PATH"
-          fi
-          if [ -f "$USDZ_PATH" ]; then
-            USDZ_URL="https://raw.githubusercontent.com/${{ github.repository }}/main/$USDZ_PATH"
-          fi
-          echo "Will POST with:"
-          echo "GLB: $GLB_URL"
-          echo "USDZ: $USDZ_URL"
-          # Wait until at least the GLB is live on GitHub's raw CDN
-          # Max 30s, check every 3s
+          GLB_URL="https://raw.githubusercontent.com/${{ github.repository }}/main/public_models/artwork.glb"
+          USDZ_URL="https://raw.githubusercontent.com/${{ github.repository }}/main/public_models/artwork.usdz"
+
+          # Wait for files to be available on GitHub's CDN
           for i in {1..10}; do
-            if curl -s -I "$GLB_URL" | grep -q "200 OK"; then
-              echo "✅ GLB is live"
-              break
-            fi
-            echo "⏳ Waiting for GLB to propagate..."
-            sleep 3
+            if curl -sfI "$GLB_URL" > /dev/null; then echo "✅ GLB is live"; break; fi
+            echo "⏳ Waiting for GLB to propagate..."; sleep 3
           done
-          # Optional: also wait for USDZ if present
-          if [ -n "$USDZ_URL" ]; then
-            for i in {1..10}; do
-              if curl -s -I "$USDZ_URL" | grep -q "200 OK"; then
-                echo "✅ USDZ is live"
-                break
-              fi
-              echo "⏳ Waiting for USDZ to propagate..."
-              sleep 3
-            done
-          fi
-          echo "POSTing to: $WP_WEBHOOK_URL"
+
+          # This jq command now includes the job_id from the client_payload.
           jq -n \
-            --arg post_id  "${{ github.event.client_payload.post_id }}" \
-            --arg title    "${{ github.event.client_payload.title }}" \
-            --arg image    "${{ github.event.client_payload.image_url }}" \
-            --arg glb      "$GLB_URL" \
-            --arg usdz     "$USDZ_URL" \
-            '{post_id:$post_id, title:$title, image_url:$image, glb_url:$glb, usdz_url:$usdz}' \
-          | curl -v -X POST "$WP_WEBHOOK_URL" \
-              -H "Authorization: Bearer $WP_WEBHOOK_TOKEN" \
-              -H "Content-Type: application/json" \
-              -d @-
+            --arg post_id "${{ github.event.client_payload.post_id }}" \
+            --arg title "${{ github.event.client_payload.title }}" \
+            --arg glb_url "$GLB_URL" \
+            --arg usdz_url "$USDZ_URL" \
+            --arg job_id "${{ github.event.client_payload.job_id }}" \
+            '{post_id: $post_id, title: $title, glb_url: $glb_url, usdz_url: $usdz_url, job_id: $job_id}' \
+          | curl -v -X POST "${{ github.event.client_payload.webhook_url }}" \
+            -H "Authorization: Bearer ${{ github.event.client_payload.webhook_token }}" \
+            -H "Content-Type: application/json" \
+            -d @-
