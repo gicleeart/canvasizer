@@ -395,16 +395,15 @@ jobs:
           fi
 
           echo "POSTing to: $WP_WEBHOOK_URL"
- 
-          jq -n \
-            --arg post_id   "${{ github.event.client_payload.post_id }}" \
-            --arg title     "${{ github.event.client_payload.title }}" \
-            --arg glb_url   "$GLB_URL" \
-            --arg usdz_url  "$USDZ_URL" \
-          	--arg job_id    "${{ github.event.client_payload.job_id }}" \
-          	'{post_id: $post_id, title: $title, glb_url: $glb_url, usdz_url: $usdz_url, job_id: $job_id}' \
-          | curl -v -X POST "${{ github.event.client_payload.webhook_url }}" \
-          	-H "Authorization: Bearer ${{ github.event.client_payload.webhook_token }}" \
-          	-H "Content-Type: application/json" \
-          	-d @-
 
+          jq -n \
+            --arg post_id  "${{ github.event.client_payload.post_id }}" \
+            --arg title    "${{ github.event.client_payload.title }}" \
+            --arg image    "${{ github.event.client_payload.image_url }}" \
+            --arg glb      "$GLB_URL" \
+            --arg usdz     "$USDZ_URL" \
+            '{post_id:$post_id, title:$title, image_url:$image, glb_url:$glb, usdz_url:$usdz}' \
+          | curl -v -X POST "$WP_WEBHOOK_URL" \
+              -H "Authorization: Bearer $WP_WEBHOOK_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d @-
