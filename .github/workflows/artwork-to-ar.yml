@@ -1,146 +1,145 @@
 name: Artwork to AR (GLB + USDZ)
 
 on:
-  repository_dispatch:
-    types: [canvasizer_trigger]
+  repository_dispatch:
+    types: [canvasizer_trigger]
 
 permissions:
-  contents: write
+  contents: write
 
 jobs:
-  build-ar:
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
+  build-ar:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
 
-      - name: Cache Blender
-        uses: actions/cache@v3
-        with:
-          path: blender
-          key: blender-macos-4.2.0
+      - name: Cache Blender
+        uses: actions/cache@v3
+        with:
+          path: blender
+          key: blender-macos-4.2.0
 
-      - name: Download Blender manually (if not cached)
-        run: |
-          mkdir -p blender
-          if [ ! -f blender/Blender.app/Contents/MacOS/Blender ]; then
-            echo "⬇️ Downloading Blender 4.2.0..."
-            curl -L https://mirror.clarkson.edu/blender/release/Blender4.2/blender-4.2.0-macos-x64.dmg -o blender/blender.dmg
-            hdiutil attach blender/blender.dmg -mountpoint /Volumes/Blender
-          	cp -R "/Volumes/Blender/Blender.app" blender/
-          	hdiutil detach /Volumes/Blender
-          else
-          	echo "✅ Blender already cached"
-          fi
+      - name: Download Blender manually (if not cached)
+        run: |
+          mkdir -p blender
+          if [ ! -f blender/Blender.app/Contents/MacOS/Blender ]; then
+            echo "⬇️ Downloading Blender 4.2.0..."
+            curl -L https://mirror.clarkson.edu/blender/release/Blender4.2/blender-4.2.0-macos-x64.dmg -o blender/blender.dmg
+            hdiutil attach blender/blender.dmg -mountpoint /Volumes/Blender
+            cp -R "/Volumes/Blender/Blender.app" blender/
+            hdiutil detach /Volumes/Blender
+          else
+            echo "✅ Blender already cached"
+          fi
 
-      - name: Download artwork
-        run: |
-          mkdir -p assets scripts output
-          curl -L "${{ github.event.client_payload.image_url }}" -o assets/artwork.png
+      - name: Download artwork
+        run: |
+          mkdir -p assets scripts output
+          curl -L "${{ github.event.client_payload.image_url }}" -o assets/artwork.png
 
-      - name: Convert artwork to JPEG for maximum compatibility
-        run: |
-          sips -s format jpeg assets/artwork.png --out assets/artwork.jpg
+      - name: Convert artwork to JPEG for maximum compatibility
+        run: |
+          sips -s format jpeg assets/artwork.png --out assets/artwork.jpg
 
-      - name: Create Blender script
-        run: |
-          cat > scripts/make_ar_plane.py << 'PY'
-          import bpy
-          import os
-          import math
+      - name: Create Blender script
+        run: |
+          cat > scripts/make_ar_plane.py << 'PY'
+          import bpy
+          import os
+          import math
 
-          img_path = os.environ["ARIP_IMAGE_PATH"]
-          out_glb  = os.environ["ARIP_OUT_GLB"]
-          out_usdz = os.environ["ARIP_OUT_USDZ"]
-          os.makedirs(os.path.dirname(out_glb), exist_ok=True)
-          os.makedirs(os.path.dirname(out_usdz), exist_ok=True)
-          bpy.ops.wm.read_factory_settings(use_empty=True)
+          img_path = os.environ["ARIP_IMAGE_PATH"]
+          out_glb  = os.environ["ARIP_OUT_GLB"]
+          out_usdz = os.environ["ARIP_OUT_USDZ"]
+          os.makedirs(os.path.dirname(out_glb), exist_ok=True)
+          os.makedirs(os.path.dirname(out_usdz), exist_ok=True)
+          bpy.ops.wm.read_factory_settings(use_empty=True)
 
-          img = bpy.data.images.load(img_path)
-          img.colorspace_settings.name = "sRGB"
+          img = bpy.data.images.load(img_path)
+          img.colorspace_settings.name = "sRGB"
 
-          width_m = 1.50
-          depth_m = 0.02
-          aspect_ratio = (img.size[0] / img.size[1]) if img.size[1] > 0 else 1.0
-          height_m = width_m / aspect_ratio
+          width_m = 1.50
+          depth_m = 0.02
+          aspect_ratio = (img.size[0] / img.size[1]) if img.size[1] > 0 else 1.0
+          height_m = width_m / aspect_ratio
 
-          bpy.ops.mesh.primitive_plane_add(size=1.0, enter_editmode=False, location=(0, 0, 0))
-          panel = bpy.context.active_object
-          panel.name = "ArtPanel"
+          bpy.ops.mesh.primitive_plane_add(size=1.0, enter_editmode=False, location=(0, 0, 0))
+          panel = bpy.context.active_object
+          panel.name = "ArtPanel"
 
-          mod = panel.modifiers.new(name="Solidify", type='SOLIDIFY')
-          mod.thickness = depth_m
-          mod.offset = 1.0
-          bpy.ops.object.modifier_apply(modifier=mod.name)
-          panel.scale = (width_m / 2.0, height_m / 2.0, 1.0)
-          bpy.ops.object.transform_apply(scale=True)
-          panel.rotation_euler[0] = math.radians(90)
-          bpy.ops.object.transform_apply(rotation=True)
+          mod = panel.modifiers.new(name="Solidify", type='SOLIDIFY')
+          mod.thickness = depth_m
+          mod.offset = 1.0
+          bpy.ops.object.modifier_apply(modifier=mod.name)
+          panel.scale = (width_m / 2.0, height_m / 2.0, 1.0)
+          bpy.ops.object.transform_apply(scale=True)
+          panel.rotation_euler[0] = math.radians(90)
+          bpy.ops.object.transform_apply(rotation=True)
 
-          mesh = panel.data
-          mat_artwork = bpy.data.materials.new("ArtworkMaterial")
-          mat_artwork.use_nodes = True
-          nodes = mat_artwork.node_tree.nodes
-          bsdf = nodes.get("Principled BSDF")
-          tex_node = nodes.new("ShaderNodeTexImage")
-          tex_node.image = img
-          mat_artwork.node_tree.links.new(tex_node.outputs['Color'], bsdf.inputs['Base Color'])
-          mesh.materials.append(mat_artwork)
+          mesh = panel.data
+          mat_artwork = bpy.data.materials.new("ArtworkMaterial")
+          mat_artwork.use_nodes = True
+          nodes = mat_artwork.node_tree.nodes
+          bsdf = nodes.get("Principled BSDF")
+          tex_node = nodes.new("ShaderNodeTexImage")
+          tex_node.image = img
+          mat_artwork.node_tree.links.new(tex_node.outputs['Color'], bsdf.inputs['Base Color'])
+          mesh.materials.append(mat_artwork)
 
-          bpy.ops.object.select_all(action='DESELECT')
-          panel.select_set(True)
-          bpy.context.view_layer.objects.active = panel
+          bpy.ops.object.select_all(action='DESELECT')
+          panel.select_set(True)
+          bpy.context.view_layer.objects.active = panel
 
-          print(f"📦 Exporting GLB to {out_glb}...")
-          bpy.ops.export_scene.gltf(filepath=out_glb, export_format='GLB', use_selection=True, export_yup=True)
-          print("✅ GLB export complete.")
+          print(f"📦 Exporting GLB to {out_glb}...")
+          bpy.ops.export_scene.gltf(filepath=out_glb, export_format='GLB', use_selection=True, export_yup=True)
+          print("✅ GLB export complete.")
 
-          print(f"📦 Exporting USDZ to {out_usdz}...")
-          bpy.ops.wm.usd_export(filepath=out_usdz, selected_objects_only=True, export_textures=True, relative_paths=False)
-          print("✅ USDZ export complete.")
-          PY
+          print(f"📦 Exporting USDZ to {out_usdz}...")
+          bpy.ops.wm.usd_export(filepath=out_usdz, selected_objects_only=True, export_textures=True, relative_paths=False)
+          print("✅ USDZ export complete.")
+          PY
 
-      - name: Run Blender headless
-        env:
-          ARIP_IMAGE_PATH: ${{ github.workspace }}/assets/artwork.jpg
-          ARIP_OUT_GLB:   ${{ github.workspace }}/output/artwork.glb
-          ARIP_OUT_USDZ:  ${{ github.workspace }}/output/artwork.usdz
-        run: blender/blender.app/Contents/MacOS/Blender -b -noaudio --python scripts/make_ar_plane.py
+      - name: Run Blender headless
+        env:
+          ARIP_IMAGE_PATH: ${{ github.workspace }}/assets/artwork.jpg
+          ARIP_OUT_GLB:    ${{ github.workspace }}/output/artwork.glb
+          ARIP_OUT_USDZ:   ${{ github.workspace }}/output/artwork.usdz
+        run: blender/Blender.app/Contents/MacOS/Blender -b -noaudio --python scripts/make_ar_plane.py
 
-      - name: Normalize and stage artifacts
-        run: |
-          set -euxo pipefail
-          mkdir -p public_models
-          cp output/artwork.glb public_models/artwork.glb
-          cp output/artwork.usdz public_models/artwork.usdz
+      - name: Normalize and stage artifacts
+        run: |
+          mkdir -p public_models
+          cp output/artwork.glb public_models/artwork.glb
+          cp output/artwork.usdz public_models/artwork.usdz
 
-      - name: Commit artifacts to repo
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add public_models
-          git commit -m "Add AR models for ${{ github.event.client_payload.title }}" || echo "No changes to commit"
-          git push
+      - name: Commit artifacts to repo
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add public_models
+          git commit -m "Add AR models for ${{ github.event.client_payload.title }}" || echo "No changes to commit"
+          git push
 
-      - name: POST back to WordPress (after HEAD check)
-        run: |
-          GLB_URL="https://raw.githubusercontent.com/${{ github.repository }}/main/public_models/artwork.glb"
-          USDZ_URL="https://raw.githubusercontent.com/${{ github.repository }}/main/public_models/artwork.usdz"
+      - name: POST back to WordPress (after HEAD check)
+        run: |
+          GLB_URL="https://raw.githubusercontent.com/${{ github.repository }}/main/public_models/artwork.glb"
+          USDZ_URL="https://raw.githubusercontent.com/${{ github.repository }}/main/public_models/artwork.usdz"
 
-          # Wait for files to be available on GitHub's CDN
-          for i in {1..10}; do
-            if curl -sfI "$GLB_URL" > /dev/null; then echo "✅ GLB is live"; break; fi
-            echo "⏳ Waiting for GLB to propagate..."; sleep 3
-          done
+          # Wait for files to be available on GitHub's CDN
+          for i in {1..10}; do
+            if curl -sfI "$GLB_URL" > /dev/null; then echo "✅ GLB is live"; break; fi
+            echo "⏳ Waiting for GLB to propagate..."; sleep 3
+          done
 
-          # This jq command now includes the job_id from the client_payload.
-          jq -n \
-          	--arg post_id "${{ github.event.client_payload.post_id }}" \
-          	--arg title "${{ github.event.client_payload.title }}" \
-          	--arg glb_url "$GLB_URL" \
-        _ --arg usdz_url "$USDZ_URL" \
-          	--arg job_id "${{ github.event.client_payload.job_id }}" \
-          	'{post_id: $post_id, title: $title, glb_url: $glb_url, usdz_url: $usdz_url, job_id: $job_id}' \
-          | curl -v -X POST "${{ github.event.client_payload.webhook_url }}" \
-          	-H "Authorization: Bearer ${{ github.event.client_payload.webhook_token }}" \
-          	-H "Content-Type: application/json" \
-          	-d @-
+          # This jq command now includes the job_id from the client_payload.
+          jq -n \
+            --arg post_id "${{ github.event.client_payload.post_id }}" \
+            --arg title "${{ github.event.client_payload.title }}" \
+            --arg glb_url "$GLB_URL" \
+            --arg usdz_url "$USDZ_URL" \
+            --arg job_id "${{ github.event.client_payload.job_id }}" \
+            '{post_id: $post_id, title: $title, glb_url: $glb_url, usdz_url: $usdz_url, job_id: $job_id}' \
+          | curl -v -X POST "${{ github.event.client_payload.webhook_url }}" \
+            -H "Authorization: Bearer ${{ github.event.client_payload.webhook_token }}" \
+            -H "Content-Type: application/json" \
+            -d @-
