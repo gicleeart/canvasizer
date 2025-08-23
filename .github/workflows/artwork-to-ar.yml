@@ -17,21 +17,23 @@ jobs:
         uses: actions/cache@v3
         with:
           path: blender
-          key: blender-macos-3.6.5  # or whatever version you're using
+          # Use a new key for the new version
+          key: blender-macos-4.2.0
 
       - name: Download Blender manually (if not cached)
         run: |
           mkdir -p blender
-          if [ ! -f blender/blender.app/Contents/MacOS/Blender ]; then
-            echo "⬇️ Downloading Blender..."
-            curl -L https://mirror.clarkson.edu/blender/release/Blender3.6/blender-3.6.5-macos-x64.dmg -o blender/blender.dmg
+          if [ ! -f blender/Blender.app/Contents/MacOS/Blender ]; then
+            echo "⬇️ Downloading Blender 4.2.0..."
+            # Use the URL for the new version
+            curl -L https://mirror.clarkson.edu/blender/release/Blender4.2/blender-4.2.0-macos-x64.dmg -o blender/blender.dmg
             hdiutil attach blender/blender.dmg -mountpoint /Volumes/Blender
+            # The app name inside the DMG is now just "Blender.app"
             cp -R "/Volumes/Blender/Blender.app" blender/
             hdiutil detach /Volumes/Blender
           else
             echo "✅ Blender already cached"
           fi
-
       - name: Cache USD repo
         uses: actions/cache@v3
         with:
@@ -62,12 +64,10 @@ jobs:
             cd USD
             python build_scripts/build_usd.py ${{ github.workspace }}/usd-tools --no-usdview --no-tests --no-imaging
           fi
-
       - name: Download artwork
         run: |
           mkdir -p assets scripts output
           curl -L "${{ github.event.client_payload.image_url }}" -o assets/artwork.png
-
       - name: Preflight debug
         run: |
           set -euxo pipefail
@@ -75,236 +75,67 @@ jobs:
           ls -la
           echo "Tree before conversion:"
           find . -maxdepth 3 -type f
-
+      - name: Convert artwork to JPEG for maximum compatibility
+        run: |
+          sips -s format jpeg assets/artwork.png --out assets/artwork.jpg
+          echo "ARIP_IMAGE_PATH_FINAL=${{ github.workspace }}/assets/artwork.jpg" >> $GITHUB_ENV
+          
       - name: Create Blender script
         run: |
           cat > scripts/make_ar_plane.py << 'PY'
-          import bpy, os
-
-          # Env paths
+          import bpy
+          import os
+          import math
+          # === 1. SETUP ===
           img_path = os.environ["ARIP_IMAGE_PATH"]
           out_glb  = os.environ["ARIP_OUT_GLB"]
           out_usdz = os.environ["ARIP_OUT_USDZ"]
-          
-          # Ensure dirs exist
           os.makedirs(os.path.dirname(out_glb), exist_ok=True)
           os.makedirs(os.path.dirname(out_usdz), exist_ok=True)
-          
-          # Clean scene
           bpy.ops.wm.read_factory_settings(use_empty=True)
-          
-          # Panel dimensions
-          width_m = 1.50     # 1.5 M wide
-          depth_m = 0.02     # 2 cm thick
-          
-          # Load image and compute aspect
+          # === 2. GEOMETRY AND IMAGE LOADING ===
           img = bpy.data.images.load(img_path)
-          img.colorspace_settings.name = "sRGB"
-          aspect = (img.size[0] / img.size[1]) if img.size[1] else 1.0
-          height_m = width_m / aspect
           
-          # Create front plane at origin
-          bpy.ops.mesh.primitive_plane_add(size=1.0, enter_editmode=False, location=(0, 0, 3.0))
+          # ✅ THE FINAL FIX: Tell Blender to pass the raw color data through.
+          img.colorspace_settings.name = "sRGB"
+          width_m = 1.50
+          depth_m = 0.02
+          aspect_ratio = (img.size[0] / img.size[1]) if img.size[1] > 0 else 1.0
+          height_m = width_m / aspect_ratio
+          bpy.ops.mesh.primitive_plane_add(size=1.0, enter_editmode=False, location=(0, 0, 0))
           panel = bpy.context.active_object
           panel.name = "ArtPanel"
-         
-         
-          # Solidify for thickness (push back so front stays at z=0)
           mod = panel.modifiers.new(name="Solidify", type='SOLIDIFY')
           mod.thickness = depth_m
-          mod.offset = -1.0
+          mod.offset = 1.0
           bpy.ops.object.modifier_apply(modifier=mod.name)
-
-          # Scale to real size
           panel.scale = (width_m / 2.0, height_m / 2.0, 1.0)
-          bpy.ops.object.transform_apply(scale=True, rotation=True, location=False)
-
-          # Tilt upright: rotate +90° around X so face points +Y
-          import math
+          bpy.ops.object.transform_apply(scale=True)
           panel.rotation_euler[0] = math.radians(90)
           bpy.ops.object.transform_apply(rotation=True)
-          
+          # === 3. RADICALLY SIMPLIFIED MATERIAL SETUP ===
           mesh = panel.data
-          
-          # Ensure a UV layer
-          if not mesh.uv_layers:
-              mesh.uv_layers.new(name="UVMap")
-          uv_layer = mesh.uv_layers.active  # MeshUVLoopLayer
-          
-          # Materials
-          mat_front = bpy.data.materials.new("FrontArt")
-          mat_front.use_nodes = True
-          f_bsdf = mat_front.node_tree.nodes.get("Principled BSDF")
-          f_tex = mat_front.node_tree.nodes.new("ShaderNodeTexImage")
-          f_tex.image = img
-          f_tex.interpolation = "Smart"
-          f_tex.extension = "CLIP"  # no tiling past edges
-          mat_front.node_tree.links.new(f_tex.outputs["Color"], f_bsdf.inputs["Base Color"])
-          f_bsdf.inputs["Roughness"].default_value = 0.7
-          f_bsdf.inputs["Metallic"].default_value = 0.0
-          
-          mat_side = bpy.data.materials.new("SideMat")
-          mat_side.use_nodes = True
-          s_bsdf = mat_side.node_tree.nodes.get("Principled BSDF")
-          s_bsdf.inputs["Base Color"].default_value = (1.0, 1.0, 1.0, 1.0)  # pure white
-          s_bsdf.inputs["Roughness"].default_value = 0.9
-          s_bsdf.inputs["Metallic"].default_value = 0.0
-          
-          # Assign material slots: 0 = front, 1 = sides/back
-          mesh.materials.clear()
-          mesh.materials.append(mat_front)
-          mesh.materials.append(mat_side)
-          
-          # Default all faces to side material
-          for poly in mesh.polygons:
-              poly.material_index = 1
-          
-          # Pick the front face (largest +Y quad)
-          import mathutils
-
-          # Find the "front" face (as before)
-          candidates = [p for p in mesh.polygons if p.normal.y > 0.5]
-          front_face = max(candidates, key=lambda p: p.area) if candidates else max(mesh.polygons, key=lambda p: p.center.y)
-          
-          # Find the *opposite* face whose normal is ~180° from the front's
-          opposite_face = None
-          for p in mesh.polygons:
-              if p != front_face and p.normal.dot(front_face.normal) < -0.9999:
-                  opposite_face = p
-                  break
-          
-          # If found, use that as the artwork face; otherwise fall back to front_face
-          target_face = opposite_face if opposite_face else front_face
-          target_face.material_index = 0
-          
-          # Planar UVs for the front face: fill 0..1 using local X/Y extents
-          def rotate_texture_180(mesh, face, uv_layer):
-              """
-              Rotate the texture 180 degrees on a specific face by flipping both UV axes.
-              mesh: bpy.types.Mesh
-              face: bpy.types.MeshPolygon (target face)
-              uv_layer: bpy.types.MeshUVLoopLayer (mesh.uv_layers.active)
-              """
-              # Build planar 0..1 UVs from local X/Y extents, then invert both axes
-              xs, ys = [], []
-              for li in face.loop_indices:
-                  v = mesh.vertices[mesh.loops[li].vertex_index]
-                  xs.append(v.co.x); ys.append(v.co.y)
-              min_x, max_x = min(xs), max(xs)
-              min_y, max_y = min(ys), max(ys)
-              dx = (max_x - min_x) or 1.0
-              dy = (max_y - min_y) or 1.0
-          
-              for li in face.loop_indices:
-                  v = mesh.vertices[mesh.loops[li].vertex_index]
-                  uv = uv_layer.data[li].uv
-                  u = (v.co.x - min_x) / dx
-                  v_ = (v.co.y - min_y) / dy
-                  uv.x = 1.0 - u
-                  uv.y = 1.0 - v_
-          
-          # Export GLB (embedded textures)
-          bpy.ops.export_scene.gltf(
-              filepath=out_glb,
-              export_format='GLB',
-              export_image_format='AUTO',
-              export_yup=True,
-              export_apply=True,
-              export_texcoords=True,
-              export_normals=True,
-              export_materials='EXPORT',
-              use_selection=False
-          )
-          
-          # Export USDZ
-          import os
-
-          # Select all objects to ensure export includes them
-          for obj in bpy.context.scene.objects:
-              obj.select_set(True)
-          bpy.context.view_layer.objects.active = panel
-
-          # Confirm texture format is compatible
-          img_ext = os.path.splitext(img_path)[1].lower()
-          if img_ext not in [".png", ".jpg", ".jpeg"]:
-              print(f"⚠️ Texture format {img_ext} may not be USDZ-compatible")
-
-          # Export USDZ
-          
-          import os
-          from PIL import Image
-          import bpy
-          
-          # === CONFIG ===
-          img_path = "assets/artwork.png"
-          out_usdz = "output/artwork.usdz"
-          
-          # === Convert texture if needed ===
-          def ensure_jpeg_texture(path):
-              ext = os.path.splitext(path)[1].lower()
-              if ext not in [".jpg", ".jpeg", ".png"]:
-                  print(f"Converting {path} to JPEG...")
-                  img = Image.open(path).convert("RGB")
-                  new_path = path.replace(ext, ".jpg")
-                  img.save(new_path, "JPEG")
-                  return new_path
-              return path
-          
-          img_path = ensure_jpeg_texture(img_path)
-          
-          # === Load image and pack ===
-          img = bpy.data.images.load(img_path)
-          img.pack()
-          print(f"Loaded and packed texture: {img.filepath}")
-          
-          # === Create material ===
-          mat = bpy.data.materials.new(name="ArtworkMaterial")
-          mat.use_nodes = True
-          nodes = mat.node_tree.nodes
-          tex_node = nodes.new(type='ShaderNodeTexImage')
+          mat_artwork = bpy.data.materials.new("ArtworkMaterial")
+          mat_artwork.use_nodes = True
+          nodes = mat_artwork.node_tree.nodes
+          bsdf = nodes.get("Principled BSDF")
+          tex_node = nodes.new("ShaderNodeTexImage")
           tex_node.image = img
           
-          # === Create mesh ===
-          mesh = bpy.data.meshes.new("ArtworkMesh")
-          obj = bpy.data.objects.new("Artwork", mesh)
-          bpy.context.collection.objects.link(obj)
-          bpy.context.view_layer.objects.active = obj
-          obj.select_set(True)
+          mat_artwork.node_tree.links.new(tex_node.outputs['Color'], bsdf.inputs['Base Color'])
           
-          # === Define geometry ===
-          verts = [(-1, -1, 0), (1, -1, 0), (1, 1, 0), (-1, 1, 0)]
-          faces = [(0, 1, 2, 3)]
-          mesh.from_pydata(verts, [], faces)
-          mesh.update()
-          
-          # === Apply UVs ===
-          bpy.ops.object.mode_set(mode='EDIT')
-          bpy.ops.uv.smart_project()
-          bpy.ops.object.mode_set(mode='OBJECT')
-          
-          # === Assign material ===
-          obj.data.materials.append(mat)
-          
-          # === Export USDZ ===
-          bpy.ops.wm.usd_export(filepath=out_usdz, export_textures=True)
-          print(f"Exported USDZ: {out_usdz}")
-          
-          # === Validate export ===
-          usdz_size = os.path.getsize(out_usdz) if os.path.exists(out_usdz) else 0
-          if usdz_size < 10_000:
-              print(f"⚠️ USDZ file is suspiciously small ({usdz_size} bytes) — falling back to USDA export")
-              fallback_usda = out_usdz.replace(".usdz", ".usda")
-              bpy.ops.wm.usd_export(
-                  filepath=fallback_usda,
-                  export_format='USD',
-                  export_materials=True,
-                  export_textures=True,
-                  selected_objects_only=False
-              )
-              print(f"✅ Fallback USDA export complete: {fallback_usda}")
-
+          mesh.materials.append(mat_artwork)
+          # === 4. EXPORT LOGIC ===
+          bpy.ops.object.select_all(action='DESELECT')
+          panel.select_set(True)
+          bpy.context.view_layer.objects.active = panel
+          print(f"📦 Exporting GLB to {out_glb}...")
+          bpy.ops.export_scene.gltf(filepath=out_glb, export_format='GLB', use_selection=True, export_yup=True)
+          print("✅ GLB export complete.")
+          print(f"📦 Exporting USDZ to {out_usdz}...")
+          bpy.ops.wm.usd_export(filepath=out_usdz, selected_objects_only=True, export_textures=True, relative_paths=False)
+          print("✅ USDZ export complete.")
           PY
-
       - name: Run Blender headless
         env:
           ARIP_IMAGE_PATH: ${{ github.workspace }}/assets/artwork.png
@@ -317,7 +148,6 @@ jobs:
           set -euxo pipefail
           echo "Tree after Blender:"
           find . -maxdepth 4 -type f
-
       - name: Normalize and stage artifacts
         run: |
           set -euxo pipefail
@@ -334,7 +164,6 @@ jobs:
             cp -v "$f" "public_models/$lower"
           done
           ls -la public_models
-
       - name: Upload AR artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -348,7 +177,6 @@ jobs:
           git add public_models
           git commit -m "Add AR models for ${{ github.event.client_payload.title }}" || echo "No changes to commit"
           git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
-
       - name: POST back to WordPress (after HEAD check)
         env:
           WP_WEBHOOK_URL: ${{ secrets.WP_WEBHOOK_URL }}
@@ -356,21 +184,17 @@ jobs:
         run: |
           GLB_PATH="public_models/artwork.glb"
           USDZ_PATH="public_models/artwork.usdz"
-
           GLB_URL=""
           USDZ_URL=""
-
           if [ -f "$GLB_PATH" ]; then
             GLB_URL="https://raw.githubusercontent.com/${{ github.repository }}/main/$GLB_PATH"
           fi
           if [ -f "$USDZ_PATH" ]; then
             USDZ_URL="https://raw.githubusercontent.com/${{ github.repository }}/main/$USDZ_PATH"
           fi
-
           echo "Will POST with:"
           echo "GLB: $GLB_URL"
           echo "USDZ: $USDZ_URL"
-
           # Wait until at least the GLB is live on GitHub's raw CDN
           # Max 30s, check every 3s
           for i in {1..10}; do
@@ -381,7 +205,6 @@ jobs:
             echo "⏳ Waiting for GLB to propagate..."
             sleep 3
           done
-
           # Optional: also wait for USDZ if present
           if [ -n "$USDZ_URL" ]; then
             for i in {1..10}; do
@@ -393,9 +216,7 @@ jobs:
               sleep 3
             done
           fi
-
           echo "POSTing to: $WP_WEBHOOK_URL"
-
           jq -n \
             --arg post_id  "${{ github.event.client_payload.post_id }}" \
             --arg title    "${{ github.event.client_payload.title }}" \
