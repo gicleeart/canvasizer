@@ -222,13 +222,14 @@ jobs:
               selected_objects_only=True, 
               export_textures=True, 
               relative_paths=False,
-              up_axis='Y')
+              up_axis='Y'
+          )
           print("✅ USDZ export complete.")
 
           # === 5. VERIFY FILES EXIST ===
           print("GLB exists?", os.path.exists(out_glb))
           print("USDZ exists?", os.path.exists(out_usdz))
-        PY
+          PY
 
         - name: Run Blender headless
         env:
