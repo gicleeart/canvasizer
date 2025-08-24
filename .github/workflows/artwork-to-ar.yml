@@ -356,4 +356,3 @@ jobs:
               -H "Content-Type: application/json" \
               -d @- \
           | tee /dev/stderr
-
