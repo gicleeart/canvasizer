@@ -297,6 +297,9 @@ jobs:
       
           GLB_PATH="${DEST_DIR}/model.glb"
           USDZ_PATH="${DEST_DIR}/model.usdz"
+
+          ls -l output/
+          find . -name '*.usdz'
       
           GLB_URL=""
           USDZ_URL=""
