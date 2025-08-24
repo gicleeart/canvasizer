@@ -93,6 +93,9 @@ jobs:
           os.makedirs(os.path.dirname(out_glb), exist_ok=True)
           os.makedirs(os.path.dirname(out_usdz), exist_ok=True)
           bpy.ops.wm.read_factory_settings(use_empty=True)
+          bpy.context.scene.unit_settings.system = 'METRIC'
+          bpy.context.scene.unit_settings.scale_length = 1.0  # 1 unit = 1 meter
+
           # === 2. GEOMETRY AND IMAGE LOADING ===
           img = bpy.data.images.load(img_path)
           
@@ -125,6 +128,33 @@ jobs:
           mat_artwork.node_tree.links.new(tex_node.outputs['Color'], bsdf.inputs['Base Color'])
           
           mesh.materials.append(mat_artwork)
+
+          from mathutils import Vector
+
+          # Ensure transforms are applied
+          bpy.ops.object.select_all(action='DESELECT')
+          panel.select_set(True)
+          bpy.context.view_layer.objects.active = panel
+          bpy.ops.object.transform_apply(location=False, rotation=True, scale=True)
+          
+          # Compute local bounds
+          bb = [Vector(v) for v in panel.bound_box]
+          min_x = min(v.x for v in bb); max_x = max(v.x for v in bb)
+          min_y = min(v.y for v in bb)
+          min_z = min(v.z for v in bb)
+          
+          # Translate mesh so:
+          # - back face sits on Y=0
+          # - bottom edge sits on Z=0
+          # - origin is centered across width (X center)
+          mesh = panel.data
+          offset = Vector(((min_x + max_x) / 2.0, min_y, min_z))
+          for v in mesh.vertices:
+              v.co -= offset
+          
+          bpy.context.view_layer.update()
+          print("🔧 Pivot set to bottom‑back‑center; back face flush at Y=0.")
+
           # === 4. EXPORT LOGIC ===
           bpy.ops.object.select_all(action='DESELECT')
           panel.select_set(True)
