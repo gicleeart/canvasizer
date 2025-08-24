@@ -228,7 +228,7 @@ jobs:
           # === 5. VERIFY FILES EXIST ===
           print("GLB exists?", os.path.exists(out_glb))
           print("USDZ exists?", os.path.exists(out_usdz))
-          PY
+        PY
 
         - name: Run Blender headless
         env:
