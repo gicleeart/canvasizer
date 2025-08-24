@@ -100,7 +100,7 @@ jobs:
           img = bpy.data.images.load(img_path)
           img.colorspace_settings.name = "sRGB"
           
-          width_m = 1.50
+          width_m = 3.00
           depth_m = 0.02
           aspect_ratio = (img.size[0] / img.size[1]) if img.size[1] > 0 else 1.0
           height_m = width_m / aspect_ratio
@@ -171,6 +171,14 @@ jobs:
           
           bpy.context.view_layer.update()
           print("🔧 Pivot set to bottom‑back‑center; back face flush at Y=0.")
+          
+          # --- NEW: Raise bottom edge above floor ---
+          desired_bottom_height_m = 2.0  # change to your preference
+          for v in mesh.vertices:
+              v.co.z += desired_bottom_height_m
+          
+          bpy.context.view_layer.update()
+          print(f"📏 Raised bottom edge to {desired_bottom_height_m} m above origin.")
 
           # === 4. EXPORT LOGIC ===
           bpy.ops.object.select_all(action='DESELECT')
