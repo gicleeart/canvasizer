@@ -64,10 +64,12 @@ jobs:
             cd USD
             python build_scripts/build_usd.py ${{ github.workspace }}/usd-tools --no-usdview --no-tests --no-imaging
           fi
+      
       - name: Download artwork
         run: |
           mkdir -p assets scripts output
           curl -L "${{ github.event.client_payload.image_url }}" -o assets/artwork.png
+      
       - name: Preflight debug
         run: |
           set -euxo pipefail
@@ -75,6 +77,27 @@ jobs:
           ls -la
           echo "Tree before conversion:"
           find . -maxdepth 3 -type f
+
+      - name: Derive identifiers
+        id: ids
+        run: |
+          set -e
+          USER_ID="${{ github.event.client_payload.user_id }}"
+          POST_ID="${{ github.event.client_payload.post_id }}"
+          TITLE_RAW="${{ github.event.client_payload.title }}"
+      
+          # Fallbacks just in case
+          [ -z "$USER_ID" ] && USER_ID="0"
+          [ -z "$POST_ID" ] && POST_ID="0"
+      
+          # slugify title (lowercase, alnum and dash)
+          SAFE_TITLE=$(echo "$TITLE_RAW" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+|-+$//g')
+          [ -z "$SAFE_TITLE" ] && SAFE_TITLE="artwork"
+      
+          echo "user_id=$USER_ID" >> $GITHUB_OUTPUT
+          echo "post_id=$POST_ID" >> $GITHUB_OUTPUT
+          echo "safe_title=$SAFE_TITLE" >> $GITHUB_OUTPUT
+      
       - name: Convert artwork to JPEG for maximum compatibility
         run: |
           sips -s format jpeg assets/artwork.png --out assets/artwork.jpg
@@ -208,22 +231,35 @@ jobs:
           set -euxo pipefail
           echo "Tree after Blender:"
           find . -maxdepth 4 -type f
-      - name: Normalize and stage artifacts
+      
+      - name: Normalize and stage artifacts (per user/post)
         run: |
           set -euxo pipefail
-          mkdir -p public_models
+          U="${{ steps.ids.outputs.user_id }}"
+          P="${{ steps.ids.outputs.post_id }}"
+          T="${{ steps.ids.outputs.safe_title }}"
+      
+          DEST_DIR="public_models/u${U}/p${P}"
+          mkdir -p "$DEST_DIR"
+      
           shopt -s nullglob nocaseglob
-          files=(output/*.{glb,usdz})
-          if [ ${#files[@]} -eq 0 ]; then
+          found=0
+          for f in output/*.{glb,usdz}; do
+            found=1
+            ext="${f##*.}"
+            # Use a predictable base name; include safe title if you like
+            base="model.${ext}"
+            cp -v "$f" "${DEST_DIR}/${base}"
+          done
+      
+          if [ $found -eq 0 ]; then
             echo "❌ No 3D model files produced — aborting"
             exit 1
           fi
-          for f in "${files[@]}"; do
-            base=$(basename "$f")
-            lower=$(echo "$base" | tr '[:upper:]' '[:lower:]')
-            cp -v "$f" "public_models/$lower"
-          done
-          ls -la public_models
+      
+          echo "Staged files:"
+          find "$DEST_DIR" -maxdepth 1 -type f -print
+          
       - name: Upload AR artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -237,26 +273,36 @@ jobs:
           git add public_models
           git commit -m "Add AR models for ${{ github.event.client_payload.title }}" || echo "No changes to commit"
           git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
+      
       - name: POST back to WordPress (after HEAD check)
         env:
           WP_WEBHOOK_URL: ${{ secrets.WP_WEBHOOK_URL }}
           WP_WEBHOOK_TOKEN: ${{ secrets.WP_WEBHOOK_TOKEN }}
         run: |
-          GLB_PATH="public_models/artwork.glb"
-          USDZ_PATH="public_models/artwork.usdz"
+          set -e
+          U="${{ steps.ids.outputs.user_id }}"
+          P="${{ steps.ids.outputs.post_id }}"
+          DEST_DIR="public_models/u${U}/p${P}"
+      
+          GLB_PATH="${DEST_DIR}/model.glb"
+          USDZ_PATH="${DEST_DIR}/model.usdz"
+      
           GLB_URL=""
           USDZ_URL=""
+          BASE_RAW="https://raw.githubusercontent.com/${{ github.repository }}/main"
+      
           if [ -f "$GLB_PATH" ]; then
-            GLB_URL="https://raw.githubusercontent.com/${{ github.repository }}/main/$GLB_PATH"
+            GLB_URL="${BASE_RAW}/${GLB_PATH}"
           fi
           if [ -f "$USDZ_PATH" ]; then
-            USDZ_URL="https://raw.githubusercontent.com/${{ github.repository }}/main/$USDZ_PATH"
+            USDZ_URL="${BASE_RAW}/${USDZ_PATH}"
           fi
+      
           echo "Will POST with:"
           echo "GLB: $GLB_URL"
           echo "USDZ: $USDZ_URL"
-          # Wait until at least the GLB is live on GitHub's raw CDN
-          # Max 30s, check every 3s
+      
+          # Wait for propagation (GLB required)
           for i in {1..10}; do
             if curl -s -I "$GLB_URL" | grep -q "200 OK"; then
               echo "✅ GLB is live"
@@ -265,7 +311,7 @@ jobs:
             echo "⏳ Waiting for GLB to propagate..."
             sleep 3
           done
-          # Optional: also wait for USDZ if present
+      
           if [ -n "$USDZ_URL" ]; then
             for i in {1..10}; do
               if curl -s -I "$USDZ_URL" | grep -q "200 OK"; then
@@ -276,15 +322,19 @@ jobs:
               sleep 3
             done
           fi
+      
           echo "POSTing to: $WP_WEBHOOK_URL"
           jq -n \
             --arg post_id  "${{ github.event.client_payload.post_id }}" \
+            --arg user_id  "${{ steps.ids.outputs.user_id }}" \
             --arg title    "${{ github.event.client_payload.title }}" \
             --arg image    "${{ github.event.client_payload.image_url }}" \
             --arg glb      "$GLB_URL" \
             --arg usdz     "$USDZ_URL" \
-            '{post_id:$post_id, title:$title, image_url:$image, glb_url:$glb, usdz_url:$usdz}' \
-          | curl -v -X POST "$WP_WEBHOOK_URL" \
+            '{post_id:$post_id, user_id:$user_id, title:$title, image_url:$image, glb_url:$glb, usdz_url:$usdz}' \
+          | curl -sS -X POST "$WP_WEBHOOK_URL" \
               -H "Authorization: Bearer $WP_WEBHOOK_TOKEN" \
               -H "Content-Type: application/json" \
-              -d @-
+              -d @- \
+          | tee /dev/stderr
+
