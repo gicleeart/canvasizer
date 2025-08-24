@@ -98,24 +98,43 @@ jobs:
 
           # === 2. GEOMETRY AND IMAGE LOADING ===
           img = bpy.data.images.load(img_path)
-          
-          # ✅ THE FINAL FIX: Tell Blender to pass the raw color data through.
           img.colorspace_settings.name = "sRGB"
+          
           width_m = 1.50
           depth_m = 0.02
           aspect_ratio = (img.size[0] / img.size[1]) if img.size[1] > 0 else 1.0
           height_m = width_m / aspect_ratio
+          
           bpy.ops.mesh.primitive_plane_add(size=1.0, enter_editmode=False, location=(0, 0, 0))
           panel = bpy.context.active_object
           panel.name = "ArtPanel"
+          
+          # Thickness
           mod = panel.modifiers.new(name="Solidify", type='SOLIDIFY')
           mod.thickness = depth_m
           mod.offset = 1.0
           bpy.ops.object.modifier_apply(modifier=mod.name)
+          
+          # Scale to real size
           panel.scale = (width_m / 2.0, height_m / 2.0, 1.0)
           bpy.ops.object.transform_apply(scale=True)
+          
+          # Rotate plane vertical to face +Y (wall)
           panel.rotation_euler[0] = math.radians(90)
           bpy.ops.object.transform_apply(rotation=True)
+          
+          # Pivot to bottom‑back‑center and snap back to Y=0
+          from mathutils import Vector
+          bb = [Vector(v) for v in panel.bound_box]
+          min_x = min(v.x for v in bb); max_x = max(v.x for v in bb)
+          min_y = min(v.y for v in bb)
+          min_z = min(v.z for v in bb)
+          offset = Vector(((min_x + max_x) / 2.0, min_y, min_z))
+          mesh = panel.data
+          for v in mesh.vertices:
+              v.co -= offset
+          bpy.context.view_layer.update()
+
           # === 3. RADICALLY SIMPLIFIED MATERIAL SETUP ===
           mesh = panel.data
           mat_artwork = bpy.data.materials.new("ArtworkMaterial")
@@ -126,9 +145,7 @@ jobs:
           tex_node.image = img
           
           mat_artwork.node_tree.links.new(tex_node.outputs['Color'], bsdf.inputs['Base Color'])
-          
           mesh.materials.append(mat_artwork)
-
           from mathutils import Vector
 
           # Ensure transforms are applied
@@ -163,7 +180,12 @@ jobs:
           bpy.ops.export_scene.gltf(filepath=out_glb, export_format='GLB', use_selection=True, export_yup=True)
           print("✅ GLB export complete.")
           print(f"📦 Exporting USDZ to {out_usdz}...")
-          bpy.ops.wm.usd_export(filepath=out_usdz, selected_objects_only=True, export_textures=True, relative_paths=False)
+          bpy.ops.wm.usd_export(
+              filepath=out_usdz, 
+              selected_objects_only=True, 
+              export_textures=True, 
+              relative_paths=False,
+              up_axis='Y')
           print("✅ USDZ export complete.")
           PY
       - name: Run Blender headless
