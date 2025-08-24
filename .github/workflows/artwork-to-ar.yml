@@ -64,12 +64,10 @@ jobs:
             cd USD
             python build_scripts/build_usd.py ${{ github.workspace }}/usd-tools --no-usdview --no-tests --no-imaging
           fi
-      
       - name: Download artwork
         run: |
           mkdir -p assets scripts output
           curl -L "${{ github.event.client_payload.image_url }}" -o assets/artwork.png
-      
       - name: Preflight debug
         run: |
           set -euxo pipefail
@@ -77,87 +75,44 @@ jobs:
           ls -la
           echo "Tree before conversion:"
           find . -maxdepth 3 -type f
-
-      - name: Derive identifiers
-        id: ids
-        run: |
-          set -e
-          USER_ID="${{ github.event.client_payload.user_id }}"
-          POST_ID="${{ github.event.client_payload.post_id }}"
-          TITLE_RAW="${{ github.event.client_payload.title }}"
-      
-          # Fallbacks just in case
-          [ -z "$USER_ID" ] && USER_ID="0"
-          [ -z "$POST_ID" ] && POST_ID="0"
-      
-          # slugify title (lowercase, alnum and dash)
-          SAFE_TITLE=$(echo "$TITLE_RAW" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+|-+$//g')
-          [ -z "$SAFE_TITLE" ] && SAFE_TITLE="artwork"
-      
-          echo "user_id=$USER_ID" >> $GITHUB_OUTPUT
-          echo "post_id=$POST_ID" >> $GITHUB_OUTPUT
-          echo "safe_title=$SAFE_TITLE" >> $GITHUB_OUTPUT
-      
       - name: Convert artwork to JPEG for maximum compatibility
         run: |
           sips -s format jpeg assets/artwork.png --out assets/artwork.jpg
           echo "ARIP_IMAGE_PATH_FINAL=${{ github.workspace }}/assets/artwork.jpg" >> $GITHUB_ENV
+          
       - name: Create Blender script
         run: |
           cat > scripts/make_ar_plane.py << 'PY'
           import bpy
           import os
           import math
-          
-          # === 1. SETUP 
+          # === 1. SETUP ===
           img_path = os.environ["ARIP_IMAGE_PATH"]
           out_glb  = os.environ["ARIP_OUT_GLB"]
           out_usdz = os.environ["ARIP_OUT_USDZ"]
           os.makedirs(os.path.dirname(out_glb), exist_ok=True)
           os.makedirs(os.path.dirname(out_usdz), exist_ok=True)
           bpy.ops.wm.read_factory_settings(use_empty=True)
-          bpy.context.scene.unit_settings.system = 'METRIC'
-          bpy.context.scene.unit_settings.scale_length = 1.0  # 1 unit = 1 meter
-
           # === 2. GEOMETRY AND IMAGE LOADING ===
           img = bpy.data.images.load(img_path)
-          img.colorspace_settings.name = "sRGB"
           
-          width_m = 3.00
+          # ✅ THE FINAL FIX: Tell Blender to pass the raw color data through.
+          img.colorspace_settings.name = "sRGB"
+          width_m = 1.50
           depth_m = 0.02
           aspect_ratio = (img.size[0] / img.size[1]) if img.size[1] > 0 else 1.0
           height_m = width_m / aspect_ratio
-          
           bpy.ops.mesh.primitive_plane_add(size=1.0, enter_editmode=False, location=(0, 0, 0))
           panel = bpy.context.active_object
           panel.name = "ArtPanel"
-          
-          # Thickness
           mod = panel.modifiers.new(name="Solidify", type='SOLIDIFY')
           mod.thickness = depth_m
           mod.offset = 1.0
           bpy.ops.object.modifier_apply(modifier=mod.name)
-          
-          # Scale to real size
           panel.scale = (width_m / 2.0, height_m / 2.0, 1.0)
           bpy.ops.object.transform_apply(scale=True)
-          
-          # Rotate plane vertical to face +Y (wall)
           panel.rotation_euler[0] = math.radians(90)
           bpy.ops.object.transform_apply(rotation=True)
-          
-          # Pivot to bottom‑back‑center and snap back to Y=0
-          from mathutils import Vector
-          bb = [Vector(v) for v in panel.bound_box]
-          min_x = min(v.x for v in bb); max_x = max(v.x for v in bb)
-          min_y = min(v.y for v in bb)
-          min_z = min(v.z for v in bb)
-          offset = Vector(((min_x + max_x) / 2.0, min_y, min_z))
-          mesh = panel.data
-          for v in mesh.vertices:
-              v.co -= offset
-          bpy.context.view_layer.update()
-
           # === 3. RADICALLY SIMPLIFIED MATERIAL SETUP ===
           mesh = panel.data
           mat_artwork = bpy.data.materials.new("ArtworkMaterial")
@@ -168,114 +123,47 @@ jobs:
           tex_node.image = img
           
           mat_artwork.node_tree.links.new(tex_node.outputs['Color'], bsdf.inputs['Base Color'])
+          
           mesh.materials.append(mat_artwork)
-          from mathutils import Vector
-
-          # Ensure transforms are applied
-          bpy.ops.object.select_all(action='DESELECT')
-          panel.select_set(True)
-          bpy.context.view_layer.objects.active = panel
-          bpy.ops.object.transform_apply(location=False, rotation=True, scale=True)
-          
-          # Compute local bounds
-          bb = [Vector(v) for v in panel.bound_box]
-          min_x = min(v.x for v in bb); max_x = max(v.x for v in bb)
-          min_y = min(v.y for v in bb)
-          min_z = min(v.z for v in bb)
-          
-          # Translate mesh so:
-          # - back face sits on Y=0
-          # - bottom edge sits on Z=0
-          # - origin is centered across width (X center)
-          mesh = panel.data
-          offset = Vector(((min_x + max_x) / 2.0, min_y, min_z))
-          for v in mesh.vertices:
-              v.co -= offset
-          
-          bpy.context.view_layer.update()
-          print("🔧 Pivot set to bottom‑back‑center; back face flush at Y=0.")
-          
-          # --- NEW: Raise bottom edge above floor ---
-          desired_bottom_height_m = 2.0  # change to your preference
-          for v in mesh.vertices:
-              v.co.z += desired_bottom_height_m
-          
-          bpy.context.view_layer.update()
-          print(f"📏 Raised bottom edge to {desired_bottom_height_m} m above origin.")
-
           # === 4. EXPORT LOGIC ===
           bpy.ops.object.select_all(action='DESELECT')
           panel.select_set(True)
           bpy.context.view_layer.objects.active = panel
           print(f"📦 Exporting GLB to {out_glb}...")
-          bpy.ops.export_scene.gltf(
-              filepath=out_glb, 
-              export_format='GLB', 
-              use_selection=True, 
-              export_yup=True)
+          bpy.ops.export_scene.gltf(filepath=out_glb, export_format='GLB', use_selection=True, export_yup=True)
           print("✅ GLB export complete.")
           print(f"📦 Exporting USDZ to {out_usdz}...")
-          bpy.ops.wm.usd_export(
-              filepath=out_usdz, 
-              export_usdz=True
-              selected_objects_only=True, 
-              export_textures=True, 
-              relative_paths=False,
-              up_axis='Y'
-          )
+          bpy.ops.wm.usd_export(filepath=out_usdz, selected_objects_only=True, export_textures=True, relative_paths=False)
           print("✅ USDZ export complete.")
-
-          # === 5. VERIFY FILES EXIST ===
-          print("GLB exists?", os.path.exists(out_glb))
-          print("USDZ exists?", os.path.exists(out_usdz))
           PY
-
-        - name: Run Blender headless
+      - name: Run Blender headless
         env:
-          ARIP_IMAGE_PATH: ${{ github.workspace }}/assets/artwork.jpg
+          ARIP_IMAGE_PATH: ${{ github.workspace }}/assets/artwork.png
           ARIP_OUT_GLB:   ${{ github.workspace }}/output/artwork.glb
           ARIP_OUT_USDZ:  ${{ github.workspace }}/output/artwork.usdz
         run: blender/blender.app/Contents/MacOS/Blender -b -noaudio --python scripts/make_ar_plane.py
-
 
       - name: Inspect post‑Blender output
         run: |
           set -euxo pipefail
           echo "Tree after Blender:"
           find . -maxdepth 4 -type f
-      
-      - name: Normalize and stage artifacts (per user/post)
+      - name: Normalize and stage artifacts
         run: |
           set -euxo pipefail
-          U="${{ steps.ids.outputs.user_id }}"
-          P="${{ steps.ids.outputs.post_id }}"
-          T="${{ steps.ids.outputs.safe_title }}"
-      
-          DEST_DIR="public_models/u${U}/p${P}"
-          mkdir -p "$DEST_DIR"
-      
+          mkdir -p public_models
           shopt -s nullglob nocaseglob
-          echo "DEBUG: Looking for USDZ in output/"
-          ls -l output || true
-          ls -l output/*.usdz 2>/dev/null || echo "No USDZ found in output/"
-
-          found=0
-          for f in output/*.{glb,usdz}; do
-            found=1
-            ext="${f##*.}"
-            # Use a predictable base name; include safe title if you like
-            base="model.${ext}"
-            cp -v "$f" "${DEST_DIR}/${base}"
-          done
-      
-          if [ $found -eq 0 ]; then
+          files=(output/*.{glb,usdz})
+          if [ ${#files[@]} -eq 0 ]; then
             echo "❌ No 3D model files produced — aborting"
             exit 1
           fi
-      
-          echo "Staged files:"
-          find "$DEST_DIR" -maxdepth 1 -type f -print
-          
+          for f in "${files[@]}"; do
+            base=$(basename "$f")
+            lower=$(echo "$base" | tr '[:upper:]' '[:lower:]')
+            cp -v "$f" "public_models/$lower"
+          done
+          ls -la public_models
       - name: Upload AR artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -289,39 +177,26 @@ jobs:
           git add public_models
           git commit -m "Add AR models for ${{ github.event.client_payload.title }}" || echo "No changes to commit"
           git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
-      
       - name: POST back to WordPress (after HEAD check)
         env:
           WP_WEBHOOK_URL: ${{ secrets.WP_WEBHOOK_URL }}
           WP_WEBHOOK_TOKEN: ${{ secrets.WP_WEBHOOK_TOKEN }}
         run: |
-          set -e
-          U="${{ steps.ids.outputs.user_id }}"
-          P="${{ steps.ids.outputs.post_id }}"
-          DEST_DIR="public_models/u${U}/p${P}"
-      
-          GLB_PATH="${DEST_DIR}/model.glb"
-          USDZ_PATH="${DEST_DIR}/model.usdz"
-
-          ls -l output/
-          find . -name '*.usdz'
-      
+          GLB_PATH="public_models/artwork.glb"
+          USDZ_PATH="public_models/artwork.usdz"
           GLB_URL=""
           USDZ_URL=""
-          BASE_RAW="https://raw.githubusercontent.com/${{ github.repository }}/main"
-      
           if [ -f "$GLB_PATH" ]; then
-            GLB_URL="${BASE_RAW}/${GLB_PATH}"
+            GLB_URL="https://raw.githubusercontent.com/${{ github.repository }}/main/$GLB_PATH"
           fi
           if [ -f "$USDZ_PATH" ]; then
-            USDZ_URL="${BASE_RAW}/${USDZ_PATH}"
+            USDZ_URL="https://raw.githubusercontent.com/${{ github.repository }}/main/$USDZ_PATH"
           fi
-      
           echo "Will POST with:"
           echo "GLB: $GLB_URL"
           echo "USDZ: $USDZ_URL"
-      
-          # Wait for propagation (GLB required)
+          # Wait until at least the GLB is live on GitHub's raw CDN
+          # Max 30s, check every 3s
           for i in {1..10}; do
             if curl -s -I "$GLB_URL" | grep -q "200 OK"; then
               echo "✅ GLB is live"
@@ -330,7 +205,7 @@ jobs:
             echo "⏳ Waiting for GLB to propagate..."
             sleep 3
           done
-      
+          # Optional: also wait for USDZ if present
           if [ -n "$USDZ_URL" ]; then
             for i in {1..10}; do
               if curl -s -I "$USDZ_URL" | grep -q "200 OK"; then
@@ -341,18 +216,15 @@ jobs:
               sleep 3
             done
           fi
-      
           echo "POSTing to: $WP_WEBHOOK_URL"
           jq -n \
             --arg post_id  "${{ github.event.client_payload.post_id }}" \
-            --arg user_id  "${{ steps.ids.outputs.user_id }}" \
             --arg title    "${{ github.event.client_payload.title }}" \
             --arg image    "${{ github.event.client_payload.image_url }}" \
             --arg glb      "$GLB_URL" \
             --arg usdz     "$USDZ_URL" \
-            '{post_id:$post_id, user_id:$user_id, title:$title, image_url:$image, glb_url:$glb, usdz_url:$usdz}' \
-          | curl -sS -X POST "$WP_WEBHOOK_URL" \
+            '{post_id:$post_id, title:$title, image_url:$image, glb_url:$glb, usdz_url:$usdz}' \
+          | curl -v -X POST "$WP_WEBHOOK_URL" \
               -H "Authorization: Bearer $WP_WEBHOOK_TOKEN" \
               -H "Content-Type: application/json" \
-              -d @- \
-          | tee /dev/stderr
+              -d @-
