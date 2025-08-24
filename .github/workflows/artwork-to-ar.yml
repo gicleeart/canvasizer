@@ -243,6 +243,10 @@ jobs:
           mkdir -p "$DEST_DIR"
       
           shopt -s nullglob nocaseglob
+          echo "DEBUG: Looking for USDZ in output/"
+          ls -l output || true
+          ls -l output/*.usdz 2>/dev/null || echo "No USDZ found in output/"
+
           found=0
           for f in output/*.{glb,usdz}; do
             found=1
