@@ -109,7 +109,8 @@ jobs:
           import bpy
           import os
           import math
-          # === 1. SETUP ===
+          # === 1. SETUP 
+          
           img_path = os.environ["ARIP_IMAGE_PATH"]
           out_glb  = os.environ["ARIP_OUT_GLB"]
           out_usdz = os.environ["ARIP_OUT_USDZ"]
@@ -208,17 +209,23 @@ jobs:
           panel.select_set(True)
           bpy.context.view_layer.objects.active = panel
           print(f"📦 Exporting GLB to {out_glb}...")
-          bpy.ops.export_scene.gltf(filepath=out_glb, export_format='GLB', use_selection=True, export_yup=True)
+          bpy.ops.export_scene.gltf(
+              filepath=out_glb, 
+              export_format='GLB', 
+              use_selection=True, 
+              export_yup=True)
           print("✅ GLB export complete.")
           print(f"📦 Exporting USDZ to {out_usdz}...")
           bpy.ops.wm.usd_export(
               filepath=out_usdz, 
+              export_usdz=True
               selected_objects_only=True, 
               export_textures=True, 
               relative_paths=False,
               up_axis='Y')
           print("✅ USDZ export complete.")
           PY
+          
       - name: Run Blender headless
         env:
           ARIP_IMAGE_PATH: ${{ github.workspace }}/assets/artwork.png
