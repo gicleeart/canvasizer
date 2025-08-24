@@ -68,6 +68,7 @@ jobs:
         run: |
           mkdir -p assets scripts output
           curl -L "${{ github.event.client_payload.image_url }}" -o assets/artwork.png
+      
       - name: Preflight debug
         run: |
           set -euxo pipefail
@@ -75,6 +76,19 @@ jobs:
           ls -la
           echo "Tree before conversion:"
           find . -maxdepth 3 -type f
+
+      - name: Derive user folder
+        run: |
+          # Prefer username; fall back to post_id if missing
+          USER_FOLDER_RAW="${{ github.event.client_payload.username }}"
+          if [ -z "$USER_FOLDER_RAW" ]; then
+            USER_FOLDER_RAW="${{ github.event.client_payload.post_id }}"
+          fi
+          # Slugify: lowercase, replace non-alphanum with dashes, trim dashes
+          USER_FOLDER="$(echo "$USER_FOLDER_RAW" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+|-+$//g')"
+          echo "USER_FOLDER=$USER_FOLDER" >> $GITHUB_ENV
+          echo "Using USER_FOLDER=$USER_FOLDER"
+      
       - name: Convert artwork to JPEG for maximum compatibility
         run: |
           sips -s format jpeg assets/artwork.png --out assets/artwork.jpg
@@ -136,9 +150,10 @@ jobs:
           bpy.ops.wm.usd_export(filepath=out_usdz, selected_objects_only=True, export_textures=True, relative_paths=False)
           print("✅ USDZ export complete.")
           PY
+          
       - name: Run Blender headless
         env:
-          ARIP_IMAGE_PATH: ${{ github.workspace }}/assets/artwork.png
+          ARIP_IMAGE_PATH: ${{ env.ARIP_IMAGE_PATH_FINAL }}
           ARIP_OUT_GLB:   ${{ github.workspace }}/output/artwork.glb
           ARIP_OUT_USDZ:  ${{ github.workspace }}/output/artwork.usdz
         run: blender/blender.app/Contents/MacOS/Blender -b -noaudio --python scripts/make_ar_plane.py
@@ -148,12 +163,13 @@ jobs:
           set -euxo pipefail
           echo "Tree after Blender:"
           find . -maxdepth 4 -type f
+          
       - name: Normalize and stage artifacts
         run: |
           set -euxo pipefail
-          mkdir -p public_models
+          mkdir -p "public_models/${USER_FOLDER}"
           shopt -s nullglob nocaseglob
-          files=(output/*.{glb,usdz})
+          files=(output/${USER_FOLDER}/*.{glb,usdz})
           if [ ${#files[@]} -eq 0 ]; then
             echo "❌ No 3D model files produced — aborting"
             exit 1
@@ -161,14 +177,15 @@ jobs:
           for f in "${files[@]}"; do
             base=$(basename "$f")
             lower=$(echo "$base" | tr '[:upper:]' '[:lower:]')
-            cp -v "$f" "public_models/$lower"
+            cp -v "$f" "public_models/${USER_FOLDER}/$lower"
           done
-          ls -la public_models
+          ls -la "public_models/${USER_FOLDER}"
+          
       - name: Upload AR artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: artwork-ar
-          path: public_models/*
+          name: artwork-ar-${{ env.USER_FOLDER }}
+          path: public_models/${{ env.USER_FOLDER }}/*
 
       - name: Commit artifacts to repo
         run: |
@@ -177,15 +194,17 @@ jobs:
           git add public_models
           git commit -m "Add AR models for ${{ github.event.client_payload.title }}" || echo "No changes to commit"
           git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
+      
       - name: POST back to WordPress (after HEAD check)
         env:
           WP_WEBHOOK_URL: ${{ secrets.WP_WEBHOOK_URL }}
           WP_WEBHOOK_TOKEN: ${{ secrets.WP_WEBHOOK_TOKEN }}
         run: |
-          GLB_PATH="public_models/artwork.glb"
-          USDZ_PATH="public_models/artwork.usdz"
+          GLB_PATH="public_models/${USER_FOLDER}/artwork.glb"
+          USDZ_PATH="public_models/${USER_FOLDER}/artwork.usdz"
           GLB_URL=""
           USDZ_URL=""
+          
           if [ -f "$GLB_PATH" ]; then
             GLB_URL="https://raw.githubusercontent.com/${{ github.repository }}/main/$GLB_PATH"
           fi
