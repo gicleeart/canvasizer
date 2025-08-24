@@ -99,11 +99,11 @@ jobs:
           echo "safe_title=$SAFE_TITLE" >> $GITHUB_OUTPUT
       
       - name: Convert artwork to JPEG for maximum compatibility
-          run: |
+        run: |
           sips -s format jpeg assets/artwork.png --out assets/artwork.jpg
           echo "ARIP_IMAGE_PATH_FINAL=${{ github.workspace }}/assets/artwork.jpg" >> $GITHUB_ENV
       - name: Create Blender script
-          run: |
+        run: |
           cat > scripts/make_ar_plane.py << 'PY'
           import bpy
           import os
