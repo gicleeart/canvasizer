@@ -224,14 +224,20 @@ jobs:
               relative_paths=False,
               up_axis='Y')
           print("✅ USDZ export complete.")
+
+          # === 5. VERIFY FILES EXIST ===
+          import os
+          print("GLB exists?", os.path.exists(out_glb))
+          print("USDZ exists?", os.path.exists(out_usdz))
           PY
-          
-      - name: Run Blender headless
+
+        - name: Run Blender headless
         env:
-          ARIP_IMAGE_PATH: ${{ github.workspace }}/assets/artwork.png
+          ARIP_IMAGE_PATH: ${{ github.workspace }}/assets/artwork.jpg
           ARIP_OUT_GLB:   ${{ github.workspace }}/output/artwork.glb
           ARIP_OUT_USDZ:  ${{ github.workspace }}/output/artwork.usdz
         run: blender/blender.app/Contents/MacOS/Blender -b -noaudio --python scripts/make_ar_plane.py
+
 
       - name: Inspect post‑Blender output
         run: |
