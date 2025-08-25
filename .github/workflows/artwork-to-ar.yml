@@ -170,9 +170,6 @@ jobs:
           # Ensure the user's public directory exists
           mkdir -p "public_models/${{ env.USER_ID }}"
 
-          # Clean up old models for this user first
-          rm -f public_models/${{ env.USER_ID }}/*.{glb,usdz}
-
           # Find the newly generated models in the output folder
           shopt -s nullglob nocaseglob
           files=(output/*.{glb,usdz})
