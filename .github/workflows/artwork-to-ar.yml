@@ -154,8 +154,9 @@ jobs:
       - name: Run Blender headless
         env:
           ARIP_IMAGE_PATH: ${{ github.workspace }}/assets/artwork.png
-          ARIP_OUT_GLB: ${{ github.workspace }}/output/model-${{ github.event.client_payload.post_id }}.glb
-          ARIP_OUT_USDZ: ${{ github.workspace }}/output/model-${{ github.event.client_payload.post_id }}.usdz
+          # ✅ Use the unique ID for the filename
+          ARIP_OUT_GLB:   ${{ github.workspace }}/output/model-${{ github.event.client_payload.unique_filename_id }}.glb
+          ARIP_OUT_USDZ:  ${{ github.workspace }}/output/model-${{ github.event.client_payload.unique_filename_id }}.usdz
         run: blender/blender.app/Contents/MacOS/Blender -b -noaudio --python scripts/make_ar_plane.py
 
       - name: Inspect post-Blender output
@@ -209,8 +210,10 @@ jobs:
           WP_WEBHOOK_URL: ${{ secrets.WP_WEBHOOK_URL }}
           WP_WEBHOOK_TOKEN: ${{ secrets.WP_WEBHOOK_TOKEN }}
         run: |
-          GLB_PATH="public_models/${{ env.USER_ID }}/model-${{ github.event.client_payload.post_id }}.glb"
-          USDZ_PATH="public_models/${{ env.USER_ID }}/model-${{ github.event.client_payload.post_id }}.usdz"
+          # ✅ Use the unique ID to find the correct file
+          GLB_PATH="public_models/${{ env.USER_ID }}/model-${{ github.event.client_payload.unique_filename_id }}.glb"
+          USDZ_PATH="public_models/${{ env.USER_ID }}/model-${{ github.event.client_payload.unique_filename_id }}.usdz"
+          
           GLB_URL=""
           USDZ_URL=""
           if [ -f "$GLB_PATH" ]; then
