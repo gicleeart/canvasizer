@@ -253,6 +253,7 @@ jobs:
             --arg title "${{ github.event.client_payload.title }}" \
             --arg glb "$GLB_URL" \
             --arg usdz "$USDZ_URL" \
+            --arg thumb "${{ github.event.client_payload.thumbnail_url }}" \
             '{post_id: $post_id, user_id: $user_id, title: $title, glb_url: $glb, usdz_url: $usdz}' \
           | curl --verbose --request POST "$WP_WEBHOOK_URL" \
             --header "Authorization: Bearer $WP_WEBHOOK_TOKEN" \
