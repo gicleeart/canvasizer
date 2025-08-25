@@ -187,51 +187,56 @@ jobs:
           WP_WEBHOOK_URL: ${{ secrets.WP_WEBHOOK_URL }}
           WP_WEBHOOK_TOKEN: ${{ secrets.WP_WEBHOOK_TOKEN }}
         run: |
-          # Construct paths using the user ID
+          # This command ensures the script will exit immediately if any command fails.
+          set -e
+      
+          # 1. Construct the paths to the generated model files.
+          # The ${{...}} variables are replaced by GitHub before the script runs.
           GLB_PATH="public_models/${{ env.USER_ID }}/model-${{ github.event.client_payload.post_id }}.glb"
-          USDZ_PATH="public_models/${{ env.USER_ID }}/model-${{ github.event.client_payload.post_id }}.usdz"
+          USDZ_PATH="public_models/${{ env.USER_ID }}/model-${{ github.event.client_payload.post_id }}.usdz"
+      
+          # 2. Initialize the URL variables as empty strings.
           GLB_URL=""
           USDZ_URL=""
+      
+          # 3. If the GLB file exists in the repo, build its full public URL.
           if [ -f "$GLB_PATH" ]; then
-            GLB_URL="https://raw.githubusercontent.com/${{ github.repository }}/main/$GLB_PATH"
+            GLB_URL="https://raw.githubusercontent.com/${{ github.repository }}/main/${GLB_PATH}"
           fi
+      
+          # 4. If the USDZ file exists, build its full public URL.
           if [ -f "$USDZ_PATH" ]; then
-            USDZ_URL="https://raw.githubusercontent.com/${{ github.repository }}/main/$USDZ_PATH"
+            USDZ_URL="https://raw.githubusercontent.com/${{ github.repository }}/main/${USDZ_PATH}"
           fi
+      
+          # 5. Log the final URLs for debugging in the Actions console.
+          echo "---"
           echo "Will POST with:"
           echo "GLB: $GLB_URL"
           echo "USDZ: $USDZ_URL"
-          
-          # Wait for CDN propagation (no changes to this logic)
+          echo "---"
+      
+          # 6. Wait for the files to be available on the GitHub CDN.
+          # This loop tries up to 10 times to verify the GLB URL is live.
           for i in {1..10}; do
-            if curl -s -I "$GLB_URL" | grep -q "200 OK"; then
+            if curl --silent --head --fail "$GLB_URL" > /dev/null; then
               echo "✅ GLB is live"
               break
             fi
-            echo "⏳ Waiting for GLB to propagate..."
+            echo "⏳ Waiting for GLB to propagate (attempt $i)..."
             sleep 3
           done
-          if [ -n "$USDZ_URL" ]; then
-            for i in {1..10}; do
-              if curl -s -I "$USDZ_URL" | grep -q "200 OK"; then
-                echo "✅ USDZ is live"
-                break
-              fi
-              echo "⏳ Waiting for USDZ to propagate..."
-              sleep 3
-            done
-          fi
-
-          echo "POSTing to: $WP_WEBHOOK_URL"
+      
+          # 7. Post the final data back to the WordPress webhook.
+          # The 'jq' command safely builds the JSON payload.
           jq -n \
-            --arg post_id  "${{ github.event.client_payload.post_id }}" \
-            --arg user_id  "${{ github.event.client_payload.user_id }}" \
-            --arg title    "${{ github.event.client_payload.title }}" \
-            --arg image    "${{ github.event.client_payload.image_url }}" \
-            --arg glb      "$GLB_URL" \
-            --arg usdz     "$USDZ_URL" \
-            '{post_id:$post_id, user_id:$user_id, title:$title, image_url:$image, glb_url:$glb, usdz_url:$usdz}' \
-          | curl -v -X POST "$WP_WEBHOOK_URL" \
-              -H "Authorization: Bearer $WP_WEBHOOK_TOKEN" \
-              -H "Content-Type: application/json" \
-              -d @-
+            --arg post_id "${{ github.event.client_payload.post_id }}" \
+            --arg user_id "${{ github.event.client_payload.user_id }}" \
+            --arg title "${{ github.event.client_payload.title }}" \
+            --arg glb "$GLB_URL" \
+            --arg usdz "$USDZ_URL" \
+            '{post_id: $post_id, user_id: $user_id, title: $title, glb_url: $glb, usdz_url: $usdz}' \
+          | curl --verbose --request POST "$WP_WEBHOOK_URL" \
+            --header "Authorization: Bearer $WP_WEBHOOK_TOKEN" \
+            --header "Content-Type: application/json" \
+            --data @-
