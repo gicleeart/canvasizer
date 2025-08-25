@@ -5,11 +5,15 @@ on:
     types: [canvasizer_trigger]
 
 permissions:
-  contents: write  # allow pushes to main
+  contents: write # allow pushes to main
 
 jobs:
   build-ar:
     runs-on: macos-latest
+    # ✅ This 'env' block is the critical fix.
+    # It makes the user_id available to all steps in this job.
+    env:
+      USER_ID: ${{ github.event.client_payload.user_id }}
     steps:
       - uses: actions/checkout@v4
 
@@ -17,7 +21,6 @@ jobs:
         uses: actions/cache@v3
         with:
           path: blender
-          # Use a new key for the new version
           key: blender-macos-4.2.0
 
       - name: Download Blender manually (if not cached)
@@ -25,15 +28,14 @@ jobs:
           mkdir -p blender
           if [ ! -f blender/Blender.app/Contents/MacOS/Blender ]; then
             echo "⬇️ Downloading Blender 4.2.0..."
-            # Use the URL for the new version
             curl -L https://mirror.clarkson.edu/blender/release/Blender4.2/blender-4.2.0-macos-x64.dmg -o blender/blender.dmg
             hdiutil attach blender/blender.dmg -mountpoint /Volumes/Blender
-            # The app name inside the DMG is now just "Blender.app"
             cp -R "/Volumes/Blender/Blender.app" blender/
             hdiutil detach /Volumes/Blender
           else
             echo "✅ Blender already cached"
           fi
+
       - name: Cache USD repo
         uses: actions/cache@v3
         with:
@@ -41,13 +43,13 @@ jobs:
           key: usd-repo-${{ runner.os }}-${{ hashFiles('USD/.git/HEAD') }}
           restore-keys: |
             usd-repo-${{ runner.os }}-
-      
+
       - name: Clone USD (shallow if missing)
         run: |
           if [ ! -d "USD" ]; then
             git clone --depth 1 https://github.com/PixarAnimationStudios/USD.git
           fi
-      
+
       - name: Cache USD build
         uses: actions/cache@v3
         with:
@@ -55,7 +57,7 @@ jobs:
           key: usd-build-${{ runner.os }}-${{ hashFiles('USD/build_scripts/build_usd.py') }}
           restore-keys: |
             usd-build-${{ runner.os }}-
-      
+
       - name: Build USD tools (skip if already built)
         run: |
           if [ -f "${{ github.workspace }}/usd-tools/bin/usdzip" ]; then
@@ -82,7 +84,7 @@ jobs:
         run: |
           sips -s format jpeg assets/artwork.png --out assets/artwork.jpg
           echo "ARIP_IMAGE_PATH_FINAL=${{ github.workspace }}/assets/artwork.jpg" >> $GITHUB_ENV
-          
+
       - name: Create Blender script
         run: |
           cat > scripts/make_ar_plane.py << 'PY'
@@ -98,8 +100,6 @@ jobs:
           bpy.ops.wm.read_factory_settings(use_empty=True)
           # === 2. GEOMETRY AND IMAGE LOADING ===
           img = bpy.data.images.load(img_path)
-          
-          # ✅ THE FINAL FIX: Tell Blender to pass the raw color data through.
           img.colorspace_settings.name = "sRGB"
           width_m = 1.50
           depth_m = 0.02
@@ -124,9 +124,7 @@ jobs:
           bsdf = nodes.get("Principled BSDF")
           tex_node = nodes.new("ShaderNodeTexImage")
           tex_node.image = img
-          
           mat_artwork.node_tree.links.new(tex_node.outputs['Color'], bsdf.inputs['Base Color'])
-          
           mesh.materials.append(mat_artwork)
           # === 4. EXPORT LOGIC ===
           bpy.ops.object.select_all(action='DESELECT')
@@ -143,11 +141,11 @@ jobs:
       - name: Run Blender headless
         env:
           ARIP_IMAGE_PATH: ${{ github.workspace }}/assets/artwork.png
-          ARIP_OUT_GLB:   ${{ github.workspace }}/output/model-${{ github.event.client_payload.post_id }}.glb
-          ARIP_OUT_USDZ:  ${{ github.workspace }}/output/model-${{ github.event.client_payload.post_id }}.usdz
+          ARIP_OUT_GLB: ${{ github.workspace }}/output/model-${{ github.event.client_payload.post_id }}.glb
+          ARIP_OUT_USDZ: ${{ github.workspace }}/output/model-${{ github.event.client_payload.post_id }}.usdz
         run: blender/blender.app/Contents/MacOS/Blender -b -noaudio --python scripts/make_ar_plane.py
 
-      - name: Inspect post‑Blender output
+      - name: Inspect post-Blender output
         run: |
           set -euxo pipefail
           echo "Tree after Blender:"
@@ -159,7 +157,7 @@ jobs:
           # Ensure the user's public directory exists
           mkdir -p "public_models/${{ env.USER_ID }}"
 
-          # ✅ ADDED: Clean up old models for this user first
+          # Clean up old models for this user first
           rm -f public_models/${{ env.USER_ID }}/*.{glb,usdz}
 
           # Find the newly generated models in the output folder
