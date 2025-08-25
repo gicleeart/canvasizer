@@ -11,16 +11,16 @@ jobs:
   build-ar:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository code
+        uses: actions/checkout@v4
 
-      # --- No changes in caching or tool setup steps ---
       - name: Cache Blender
         uses: actions/cache@v3
         with:
           path: blender
           key: blender-macos-4.2.0
 
-      - name: Download Blender manually (if not cached)
+      - name: Download Blender if not cached
         run: |
           mkdir -p blender
           if [ ! -f blender/Blender.app/Contents/MacOS/Blender ]; then
@@ -32,6 +32,7 @@ jobs:
           else
             echo "✅ Blender already cached"
           fi
+          
       - name: Cache USD repo
         uses: actions/cache@v3
         with:
@@ -40,7 +41,7 @@ jobs:
           restore-keys: |
             usd-repo-${{ runner.os }}-
 
-      - name: Clone USD (shallow if missing)
+      - name: Clone USD if not cached
         run: |
           if [ ! -d "USD" ]; then
             git clone --depth 1 https://github.com/PixarAnimationStudios/USD.git
@@ -54,31 +55,24 @@ jobs:
           restore-keys: |
             usd-build-${{ runner.os }}-
 
-      - name: Build USD tools (skip if already built)
+      - name: Build USD tools if not cached
         run: |
           if [ -f "${{ github.workspace }}/usd-tools/bin/usdzip" ]; then
-            echo "✅ USD tools already built — skipping build"
+            echo "✅ USD tools already built"
           else
             cd USD
             python build_scripts/build_usd.py ${{ github.workspace }}/usd-tools --no-usdview --no-tests --no-imaging
           fi
 
-      - name: Download artwork
+      - name: Download artwork from WordPress
         run: |
           mkdir -p assets scripts output
           curl -L "${{ github.event.client_payload.image_url }}" -o assets/artwork.png
       
-      # --- START OF CHANGES ---
-
-      - name: Set User ID variable # <--- ADDED: Create a convenient variable for the user_id
+      - name: Set User ID as an environment variable
         run: echo "USER_ID=${{ github.event.client_payload.user_id }}" >> $GITHUB_ENV
 
-      - name: Convert artwork to JPEG for maximum compatibility
-        run: |
-          sips -s format jpeg assets/artwork.png --out assets/artwork.jpg
-          echo "ARIP_IMAGE_PATH_FINAL=${{ github.workspace }}/assets/artwork.jpg" >> $GITHUB_ENV
-
-      - name: Create Blender script
+      - name: Create Blender Python script
         run: |
           cat > scripts/make_ar_plane.py << 'PY'
           import bpy
@@ -93,8 +87,6 @@ jobs:
           bpy.ops.wm.read_factory_settings(use_empty=True)
           # === 2. GEOMETRY AND IMAGE LOADING ===
           img = bpy.data.images.load(img_path)
-          
-          # ✅ THE FINAL FIX: Tell Blender to pass the raw color data through.
           img.colorspace_settings.name = "sRGB"
           width_m = 1.50
           depth_m = 0.02
@@ -111,7 +103,7 @@ jobs:
           bpy.ops.object.transform_apply(scale=True)
           panel.rotation_euler[0] = math.radians(90)
           bpy.ops.object.transform_apply(rotation=True)
-          # === 3. RADICALLY SIMPLIFIED MATERIAL SETUP ===
+          # === 3. MATERIAL SETUP ===
           mesh = panel.data
           mat_artwork = bpy.data.materials.new("ArtworkMaterial")
           mat_artwork.use_nodes = True
@@ -119,9 +111,7 @@ jobs:
           bsdf = nodes.get("Principled BSDF")
           tex_node = nodes.new("ShaderNodeTexImage")
           tex_node.image = img
-          
           mat_artwork.node_tree.links.new(tex_node.outputs['Color'], bsdf.inputs['Base Color'])
-          
           mesh.materials.append(mat_artwork)
           # === 4. EXPORT LOGIC ===
           bpy.ops.object.select_all(action='DESELECT')
@@ -134,53 +124,39 @@ jobs:
           bpy.ops.wm.usd_export(filepath=out_usdz, selected_objects_only=True, export_textures=True, relative_paths=False)
           print("✅ USDZ export complete.")
           PY
-          
-      - name: Run Blender headless
+      
+      - name: Run Blender to generate 3D models
         env:
           ARIP_IMAGE_PATH: ${{ github.workspace }}/assets/artwork.png
           ARIP_OUT_GLB: ${{ github.workspace }}/output/model-${{ github.event.client_payload.post_id }}.glb
           ARIP_OUT_USDZ: ${{ github.workspace }}/output/model-${{ github.event.client_payload.post_id }}.usdz
         run: blender/blender.app/Contents/MacOS/Blender -b -noaudio --python scripts/make_ar_plane.py
-        
-      - name: Inspect post‑Blender output
+      
+      - name: Normalize and stage artifacts
         run: |
-          set -euxo pipefail
-          echo "Tree after Blender:"
-          find . -maxdepth 4 -type f
-          
-      - name: Normalize and stage artifacts # <--- CHANGED
-        run: |
-          set -euxo pipefail
-          # Create the user-specific subfolder
+          set -e
           mkdir -p "public_models/${{ env.USER_ID }}"
           shopt -s nullglob nocaseglob
           files=(output/*.{glb,usdz})
           if [ ${#files[@]} -eq 0 ]; then
-            echo "❌ No 3D model files produced — aborting"
+            echo "❌ No 3D model files were produced in the 'output' folder. Aborting."
             exit 1
           fi
           for f in "${files[@]}"; do
             base=$(basename "$f")
             lower=$(echo "$base" | tr '[:upper:]' '[:lower:]')
-            # Copy into the user-specific subfolder
             cp -v "$f" "public_models/${{ env.USER_ID }}/$lower"
           done
+          echo "✅ Models staged in public_models/${{ env.USER_ID }}/:"
           ls -la "public_models/${{ env.USER_ID }}"
 
-      - name: Upload AR artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: artwork-ar-${{ env.USER_ID }} # <--- CHANGED: Make artifact name unique
-          path: public_models/${{ env.USER_ID }}/* # <--- CHANGED: Upload from user folder
-
-      - name: Commit artifacts to repo # <--- CHANGED
+      - name: Commit artifacts to repository
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          # Add the user-specific subfolder
           git add "public_models/${{ env.USER_ID }}"
-          git commit -m "Add AR models for ${{ github.event.client_payload.title }} (user: ${{ env.USER_ID }})" || echo "No changes to commit"
-          git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
+          git commit -m "Add AR models for ${{ github.event.client_payload.title }} (user: ${{ env.USER_ID }})" || echo "No changes to commit."
+          git push
 
       - name: POST back to WordPress (after HEAD check)
         env:
@@ -189,33 +165,33 @@ jobs:
         run: |
           # This command ensures the script will exit immediately if any command fails.
           set -e
-      
+
           # 1. Construct the paths to the generated model files.
           # The ${{...}} variables are replaced by GitHub before the script runs.
           GLB_PATH="public_models/${{ env.USER_ID }}/model-${{ github.event.client_payload.post_id }}.glb"
           USDZ_PATH="public_models/${{ env.USER_ID }}/model-${{ github.event.client_payload.post_id }}.usdz"
-      
+
           # 2. Initialize the URL variables as empty strings.
           GLB_URL=""
           USDZ_URL=""
-      
+
           # 3. If the GLB file exists in the repo, build its full public URL.
           if [ -f "$GLB_PATH" ]; then
             GLB_URL="https://raw.githubusercontent.com/${{ github.repository }}/main/${GLB_PATH}"
           fi
-      
+
           # 4. If the USDZ file exists, build its full public URL.
           if [ -f "$USDZ_PATH" ]; then
             USDZ_URL="https://raw.githubusercontent.com/${{ github.repository }}/main/${USDZ_PATH}"
           fi
-      
+
           # 5. Log the final URLs for debugging in the Actions console.
           echo "---"
           echo "Will POST with:"
           echo "GLB: $GLB_URL"
           echo "USDZ: $USDZ_URL"
           echo "---"
-      
+
           # 6. Wait for the files to be available on the GitHub CDN.
           # This loop tries up to 10 times to verify the GLB URL is live.
           for i in {1..10}; do
@@ -226,7 +202,7 @@ jobs:
             echo "⏳ Waiting for GLB to propagate (attempt $i)..."
             sleep 3
           done
-      
+
           # 7. Post the final data back to the WordPress webhook.
           # The 'jq' command safely builds the JSON payload.
           jq -n \
