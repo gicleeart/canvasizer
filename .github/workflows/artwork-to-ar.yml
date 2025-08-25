@@ -155,20 +155,32 @@ jobs:
 
       - name: Normalize and stage artifacts
         run: |
-          set -euxo pipefail
-          mkdir -p public_models
+          set -e
+          # Ensure the user's public directory exists
+          mkdir -p "public_models/${{ env.USER_ID }}"
+
+          # ✅ ADDED: Clean up old models for this user first
+          rm -f public_models/${{ env.USER_ID }}/*.{glb,usdz}
+
+          # Find the newly generated models in the output folder
           shopt -s nullglob nocaseglob
           files=(output/*.{glb,usdz})
+          
+          # Check if any model files were actually created
           if [ ${#files[@]} -eq 0 ]; then
-            echo "❌ No 3D model files produced — aborting"
+            echo "❌ No 3D model files were produced in the 'output' folder. Aborting."
             exit 1
           fi
+
+          # Copy the new files into the clean user directory
           for f in "${files[@]}"; do
             base=$(basename "$f")
             lower=$(echo "$base" | tr '[:upper:]' '[:lower:]')
-            cp -v "$f" "public_models/$lower"
+            cp -v "$f" "public_models/${{ env.USER_ID }}/$lower"
           done
-          ls -la public_models
+          
+          echo "✅ New models staged successfully in public_models/${{ env.USER_ID }}/:"
+          ls -la "public_models/${{ env.USER_ID }}"
 
       - name: Upload AR artifacts
         uses: actions/upload-artifact@v4
