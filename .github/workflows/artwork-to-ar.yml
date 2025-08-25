@@ -98,13 +98,26 @@ jobs:
           os.makedirs(os.path.dirname(out_glb), exist_ok=True)
           os.makedirs(os.path.dirname(out_usdz), exist_ok=True)
           bpy.ops.wm.read_factory_settings(use_empty=True)
-          # === 2. GEOMETRY AND IMAGE LOADING ===
+
+          # === 2. GEOMETRY AND IMAGE LOADING (✅ REVISED LOGIC) ===
           img = bpy.data.images.load(img_path)
           img.colorspace_settings.name = "sRGB"
-          width_m = 1.50
+          
+          # Define the target size for the longest edge of the 3D model
+          TARGET_LONG_EDGE_M = 1.50
           depth_m = 0.02
-          aspect_ratio = (img.size[0] / img.size[1]) if img.size[1] > 0 else 1.0
-          height_m = width_m / aspect_ratio
+
+          # Get image pixel dimensions
+          w_px = img.size[0]
+          h_px = img.size[1]
+
+          # Calculate width and height in meters based on the longest edge
+          if w_px >= h_px: # Landscape or square image
+              width_m = TARGET_LONG_EDGE_M
+              height_m = width_m * (h_px / w_px)
+          else: # Portrait image
+              height_m = TARGET_LONG_EDGE_M
+              width_m = height_m * (w_px / h_px)
           bpy.ops.mesh.primitive_plane_add(size=1.0, enter_editmode=False, location=(0, 0, 0))
           panel = bpy.context.active_object
           panel.name = "ArtPanel"
