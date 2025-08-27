@@ -149,16 +149,14 @@ jobs:
           ARIP_OUT_USDZ: ${{ github.workspace }}/output/model-${{ env.UNIQUE_ID }}.usdz
         run: blender/blender.app/Contents/MacOS/Blender -b -noaudio --python scripts/make_ar_plane.py
 
-      # ----------------------------------------------------------------
-      # NEW UPLOAD STEP USING OFFICIAL B2 CLI
-      # ----------------------------------------------------------------
       - name: Install B2 CLI and Upload Files
         run: |
           set -e
           echo "✅ Installing Backblaze B2 CLI..."
           pip install b2
           echo "✅ Authorizing B2 account..."
-          b2 authorize-account "${{ env.B2_KEY_ID }}" "${{ env.B2_APPLICATION_KEY }}"
+          # ✅ Using the new, non-deprecated command syntax
+          b2 account authorize "${{ env.B2_KEY_ID }}" "${{ env.B2_APPLICATION_KEY }}"
           echo "⬆️ Uploading GLB file..."
           b2 upload-file "${{ env.B2_BUCKET_NAME }}" "${{ github.workspace }}/output/model-${{ env.UNIQUE_ID }}.glb" "${{ env.USER_ID }}/model-${{ env.UNIQUE_ID }}.glb"
           echo "⬆️ Uploading USDZ file..."
