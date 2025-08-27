@@ -5,15 +5,20 @@ on:
     types: [canvasizer_trigger]
 
 permissions:
-  contents: write # allow pushes to main
+  contents: write # Kept for checkout and other potential actions
 
 jobs:
   build-ar:
     runs-on: macos-latest
-    # ✅ This 'env' block is the critical fix.
-    # It makes the user_id available to all steps in this job.
+    # ✅ Centralized environment variables for the entire job
     env:
       USER_ID: ${{ github.event.client_payload.user_id }}
+      UNIQUE_ID: ${{ github.event.client_payload.unique_filename_id }}
+      #  Secrets for Backblaze B2
+      B2_BUCKET_NAME: ${{ secrets.B2_BUCKET_NAME }}
+      B2_KEY_ID: ${{ secrets.B2_KEY_ID }}
+      B2_APPLICATION_KEY: ${{ secrets.B2_APPLICATION_KEY }}
+
     steps:
       - uses: actions/checkout@v4
 
@@ -36,13 +41,12 @@ jobs:
             echo "✅ Blender already cached"
           fi
 
+      # Caching for USD tools remains the same
       - name: Cache USD repo
         uses: actions/cache@v3
         with:
           path: USD
           key: usd-repo-${{ runner.os }}-${{ hashFiles('USD/.git/HEAD') }}
-          restore-keys: |
-            usd-repo-${{ runner.os }}-
 
       - name: Clone USD (shallow if missing)
         run: |
@@ -55,8 +59,6 @@ jobs:
         with:
           path: ${{ github.workspace }}/usd-tools
           key: usd-build-${{ runner.os }}-${{ hashFiles('USD/build_scripts/build_usd.py') }}
-          restore-keys: |
-            usd-build-${{ runner.os }}-
 
       - name: Build USD tools (skip if already built)
         run: |
@@ -72,14 +74,6 @@ jobs:
           mkdir -p assets scripts output
           curl -L "${{ github.event.client_payload.image_url }}" -o assets/artwork.png
 
-      - name: Preflight debug
-        run: |
-          set -euxo pipefail
-          pwd
-          ls -la
-          echo "Tree before conversion:"
-          find . -maxdepth 3 -type f
-
       - name: Convert artwork to JPEG for maximum compatibility
         run: |
           sips -s format jpeg assets/artwork.png --out assets/artwork.jpg
@@ -87,6 +81,7 @@ jobs:
 
       - name: Create Blender script
         run: |
+          # This step remains identical to your original script
           cat > scripts/make_ar_plane.py << 'PY'
           import bpy
           import os
@@ -153,125 +148,63 @@ jobs:
 
       - name: Run Blender headless
         env:
-          ARIP_IMAGE_PATH: ${{ github.workspace }}/assets/artwork.png
-          # ✅ Use the unique ID for the filename
-          ARIP_OUT_GLB:   ${{ github.workspace }}/output/model-${{ github.event.client_payload.unique_filename_id }}.glb
-          ARIP_OUT_USDZ:  ${{ github.workspace }}/output/model-${{ github.event.client_payload.unique_filename_id }}.usdz
+          ARIP_IMAGE_PATH: ${{ env.ARIP_IMAGE_PATH_FINAL }}
+          ARIP_OUT_GLB: ${{ github.workspace }}/output/model-${{ env.UNIQUE_ID }}.glb
+          ARIP_OUT_USDZ: ${{ github.workspace }}/output/model-${{ env.UNIQUE_ID }}.usdz
         run: blender/blender.app/Contents/MacOS/Blender -b -noaudio --python scripts/make_ar_plane.py
 
-      - name: Inspect post-Blender output
-        run: |
-          set -euxo pipefail
-          echo "Tree after Blender:"
-          find . -maxdepth 4 -type f
+      # ----------------------------------------------------------------
+      # NEW UPLOAD STEPS
+      # ----------------------------------------------------------------
 
-      - name: Normalize and stage artifacts
-        run: |
-          set -e
-          # Ensure the user's public directory exists
-          mkdir -p "public_models/${{ env.USER_ID }}"
+      - name: Upload GLB model to Backblaze B2
+        uses: majest-ik/b2-upload-action@v2
+        with:
+          application_key_id: ${{ env.B2_KEY_ID }}
+          application_key: ${{ env.B2_APPLICATION_KEY }}
+          bucket_name: ${{ env.B2_BUCKET_NAME }}
+          source: ${{ github.workspace }}/output/model-${{ env.UNIQUE_ID }}.glb
+          destination: ${{ env.USER_ID }}/model-${{ env.UNIQUE_ID }}.glb
 
-          # Find the newly generated models in the output folder
-          shopt -s nullglob nocaseglob
-          files=(output/*.{glb,usdz})
-          
-          # Check if any model files were actually created
-          if [ ${#files[@]} -eq 0 ]; then
-            echo "❌ No 3D model files were produced in the 'output' folder. Aborting."
-            exit 1
-          fi
+      - name: Upload USDZ model to Backblaze B2
+        uses: majest-ik/b2-upload-action@v2
+        with:
+          application_key_id: ${{ env.B2_KEY_ID }}
+          application_key: ${{ env.B2_APPLICATION_KEY }}
+          bucket_name: ${{ env.B2_BUCKET_NAME }}
+          source: ${{ github.workspace }}/output/model-${{ env.UNIQUE_ID }}.usdz
+          destination: ${{ env.USER_ID }}/model-${{ env.UNIQUE_ID }}.usdz
 
-          # Copy the new files into the clean user directory
-          for f in "${files[@]}"; do
-            base=$(basename "$f")
-            lower=$(echo "$base" | tr '[:upper:]' '[:lower:]')
-            cp -v "$f" "public_models/${{ env.USER_ID }}/$lower"
-          done
-          
-          echo "✅ New models staged successfully in public_models/${{ env.USER_ID }}/:"
-          ls -la "public_models/${{ env.USER_ID }}"
-
-      - name: Upload AR artifacts
+      # This step is still useful for debugging from the GitHub UI
+      - name: Upload AR artifacts for inspection
         uses: actions/upload-artifact@v4
         with:
-          name: artwork-ar
-          path: public_models/*
+          name: artwork-ar-${{ env.UNIQUE_ID }}
+          path: output/*
 
-      - name: Commit artifacts to repo
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          
-          git add public_models
-          
-          # Check if there are any changes to commit
-          if git diff-index --quiet HEAD; then
-            echo "No changes to commit"
-          else
-            git commit -m "Add AR models for ${{ github.event.client_payload.title }}"
-            
-            # Retry loop for pushing
-            for i in 1 2 3; do
-              # Pull latest changes before pushing to avoid race conditions
-              git pull --rebase
-              
-              # Attempt to push
-              if git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git; then
-                echo "✅ Push successful on attempt $i"
-                break # Exit loop on success
-              else
-                echo "⚠️ Push failed on attempt $i. Retrying in 5 seconds..."
-                sleep 5
-              fi
-              
-              if [ $i = 3 ]; then
-                echo "❌ Failed to push after 3 attempts."
-                exit 1
-              fi
-            done
-          fi
+      # ----------------------------------------------------------------
+      # REVISED CALLBACK STEP
+      # ----------------------------------------------------------------
 
-      - name: POST back to WordPress (after HEAD check)
+      - name: POST back to WordPress
         env:
           WP_WEBHOOK_URL: ${{ secrets.WP_WEBHOOK_URL }}
           WP_WEBHOOK_TOKEN: ${{ secrets.WP_WEBHOOK_TOKEN }}
         run: |
-          # ✅ Use the unique ID to find the correct file
-          GLB_PATH="public_models/${{ env.USER_ID }}/model-${{ github.event.client_payload.unique_filename_id }}.glb"
-          USDZ_PATH="public_models/${{ env.USER_ID }}/model-${{ github.event.client_payload.unique_filename_id }}.usdz"
+          set -e
           
-          GLB_URL=""
-          USDZ_URL=""
-          if [ -f "$GLB_PATH" ]; then
-            GLB_URL="https://raw.githubusercontent.com/${{ github.repository }}/main/$GLB_PATH"
-          fi
-          if [ -f "$USDZ_PATH" ]; then
-            USDZ_URL="https://raw.githubusercontent.com/${{ github.repository }}/main/$USDZ_PATH"
-          fi
-          echo "Will POST with:"
+          # Construct the public URLs for the files in your B2 bucket.
+          # The format is https://www.backblazeb2.com/file/<bucket_name>/<file_path>
+          GLB_URL="https://www.backblazeb2.com/file/${B2_BUCKET_NAME}/${USER_ID}/model-${UNIQUE_ID}.glb"
+          USDZ_URL="https://www.backblazeb2.com/file/${B2_BUCKET_NAME}/${USER_ID}/model-${UNIQUE_ID}.usdz"
+          
+          echo "✅ Preparing to POST back to WordPress with the following URLs:"
           echo "GLB: $GLB_URL"
           echo "USDZ: $USDZ_URL"
-          # Wait until at least the GLB is live on GitHub's raw CDN
-          # Max 30s, check every 3s
-          for i in {1..10}; do
-            if curl -s -I "$GLB_URL" | grep -q "200 OK"; then
-              echo "✅ GLB is live"
-              break
-            fi
-            echo "⏳ Waiting for GLB to propagate..."
-            sleep 3
-          done
-          # Optional: also wait for USDZ if present
-          if [ -n "$USDZ_URL" ]; then
-            for i in {1..10}; do
-              if curl -s -I "$USDZ_URL" | grep -q "200 OK"; then
-                echo "✅ USDZ is live"
-                break
-              fi
-              echo "⏳ Waiting for USDZ to propagate..."
-              sleep 3
-            done
-          fi
+          
+          # The wait/check loop is no longer needed. The B2 upload action
+          # will fail the job if the upload doesn't succeed.
+          
           echo "POSTing to: $WP_WEBHOOK_URL"
           jq -n \
             --arg post_id "${{ github.event.client_payload.post_id }}" \
