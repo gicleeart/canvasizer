@@ -5,7 +5,7 @@ on:
     types: [canvasizer_trigger]
 
 permissions:
-  contents: write # Kept for checkout and other potential actions
+  contents: write
 
 jobs:
   build-ar:
@@ -94,7 +94,7 @@ jobs:
           # === 2. GEOMETRY AND IMAGE LOADING (✅ REVISED LOGIC) ===
           img = bpy.data.images.load(img_path)
           img.colorspace_settings.name = "sRGB"
-          
+
           # Define the target size for the longest edge of the 3D model
           TARGET_LONG_EDGE_M = 1.50
           depth_m = 0.02
@@ -155,22 +155,22 @@ jobs:
       # ----------------------------------------------------------------
 
       - name: Upload GLB model to Backblaze B2
-        uses: trilom-technologies/b2-upload-action@v2
+        uses: pi-squared/backblaze-b2-upload-action@v3
         with:
-          b2-account-id: ${{ env.B2_KEY_ID }} # ✅ CORRECTED PARAMETER NAME
-          b2-account-key: ${{ env.B2_APPLICATION_KEY }} # ✅ CORRECTED PARAMETER NAME
-          b2-bucket: ${{ env.B2_BUCKET_NAME }} # ✅ CORRECTED PARAMETER NAME
-          source-file: ${{ github.workspace }}/output/model-${{ env.UNIQUE_ID }}.glb # ✅ CORRECTED PARAMETER NAME
-          destination-file: ${{ env.USER_ID }}/model-${{ env.UNIQUE_ID }}.glb # ✅ CORRECTED PARAMETER NAME
+          b2_key_id: ${{ env.B2_KEY_ID }}
+          b2_application_key: ${{ env.B2_APPLICATION_KEY }}
+          b2_bucket_name: ${{ env.B2_BUCKET_NAME }}
+          source_path: ${{ github.workspace }}/output/model-${{ env.UNIQUE_ID }}.glb
+          destination_path: ${{ env.USER_ID }}/model-${{ env.UNIQUE_ID }}.glb
 
       - name: Upload USDZ model to Backblaze B2
-        uses: trilom-technologies/b2-upload-action@v2
+        uses: pi-squared/backblaze-b2-upload-action@v3
         with:
-          b2-account-id: ${{ env.B2_KEY_ID }} # ✅ CORRECTED PARAMETER NAME
-          b2-account-key: ${{ env.B2_APPLICATION_KEY }} # ✅ CORRECTED PARAMETER NAME
-          b2-bucket: ${{ env.B2_BUCKET_NAME }} # ✅ CORRECTED PARAMETER NAME
-          source-file: ${{ github.workspace }}/output/model-${{ env.UNIQUE_ID }}.usdz # ✅ CORRECTED PARAMETER NAME
-          destination-file: ${{ env.USER_ID }}/model-${{ env.UNIQUE_ID }}.usdz # ✅ CORRECTED PARAMETER NAME
+          b2_key_id: ${{ env.B2_KEY_ID }}
+          b2_application_key: ${{ env.B2_APPLICATION_KEY }}
+          b2_bucket_name: ${{ env.B2_BUCKET_NAME }}
+          source_path: ${{ github.workspace }}/output/model-${{ env.UNIQUE_ID }}.usdz
+          destination_path: ${{ env.USER_ID }}/model-${{ env.UNIQUE_ID }}.usdz
 
       - name: Upload AR artifacts for inspection
         uses: actions/upload-artifact@v4
@@ -188,14 +188,14 @@ jobs:
           WP_WEBHOOK_TOKEN: ${{ secrets.WP_WEBHOOK_TOKEN }}
         run: |
           set -e
-          
+
           GLB_URL="https://www.backblazeb2.com/file/${B2_BUCKET_NAME}/${USER_ID}/model-${UNIQUE_ID}.glb"
           USDZ_URL="https://www.backblazeb2.com/file/${B2_BUCKET_NAME}/${USER_ID}/model-${UNIQUE_ID}.usdz"
-          
+
           echo "✅ Preparing to POST back to WordPress with the following URLs:"
           echo "GLB: $GLB_URL"
           echo "USDZ: $USDZ_URL"
-          
+
           echo "POSTing to: $WP_WEBHOOK_URL"
           jq -n \
             --arg post_id "${{ github.event.client_payload.post_id }}" \
