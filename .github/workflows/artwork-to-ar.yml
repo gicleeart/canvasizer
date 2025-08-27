@@ -14,7 +14,8 @@ jobs:
       USER_ID: ${{ github.event.client_payload.user_id }}
       UNIQUE_ID: ${{ github.event.client_payload.unique_filename_id }}
       B2_BUCKET_NAME: ${{ secrets.B2_BUCKET_NAME }}
-      B2_KEY_ID: ${{ secrets.B2_KEY_ID }}
+      # ✅ Renamed B2_KEY_ID to match what the B2 CLI expects
+      B2_APPLICATION_KEY_ID: ${{ secrets.B2_KEY_ID }}
       B2_APPLICATION_KEY: ${{ secrets.B2_APPLICATION_KEY }}
 
     steps:
@@ -154,9 +155,7 @@ jobs:
           set -e
           echo "✅ Installing Backblaze B2 CLI..."
           pip install b2
-          echo "✅ Authorizing B2 account..."
-          # ✅ Using the new, non-deprecated command syntax
-          b2 account authorize "${{ env.B2_KEY_ID }}" "${{ env.B2_APPLICATION_KEY }}"
+          # ✅ Authorization step is no longer needed, B2 CLI will use the environment variables automatically.
           echo "⬆️ Uploading GLB file..."
           b2 upload-file "${{ env.B2_BUCKET_NAME }}" "${{ github.workspace }}/output/model-${{ env.UNIQUE_ID }}.glb" "${{ env.USER_ID }}/model-${{ env.UNIQUE_ID }}.glb"
           echo "⬆️ Uploading USDZ file..."
@@ -175,8 +174,8 @@ jobs:
           WP_WEBHOOK_TOKEN: ${{ secrets.WP_WEBHOOK_TOKEN }}
         run: |
           set -e
-          GLB_URL="https://www.backblazeb2.com/file/${B2_BUCKET_NAME}/${USER_ID}/model-${UNIQUE_ID}.glb"
-          USDZ_URL="https://www.backblazeb2.com/file/${B2_BUCKET_NAME}/${USER_ID}/model-${UNIQUE_ID}.usdz"
+          GLB_URL="https://f005.backblazeb2.com/file/${B2_BUCKET_NAME}/${USER_ID}/model-${UNIQUE_ID}.glb"
+          USDZ_URL="https://f005.backblazeb2.com/file/${B2_BUCKET_NAME}/${USER_ID}/model-${UNIQUE_ID}.usdz"
           echo "✅ Preparing to POST back to WordPress with the following URLs:"
           echo "GLB: $GLB_URL"
           echo "USDZ: $USDZ_URL"
