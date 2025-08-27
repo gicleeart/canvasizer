@@ -155,7 +155,7 @@ jobs:
       # ----------------------------------------------------------------
 
       - name: Upload GLB model to Backblaze B2
-        uses: trilom/b2-upload-action@v2 # ✅ CORRECTED ACTION
+        uses: trilom-technologies/b2-upload-action@v2
         with:
           b2-account-id: ${{ env.B2_KEY_ID }} # ✅ CORRECTED PARAMETER NAME
           b2-account-key: ${{ env.B2_APPLICATION_KEY }} # ✅ CORRECTED PARAMETER NAME
@@ -164,7 +164,7 @@ jobs:
           destination-file: ${{ env.USER_ID }}/model-${{ env.UNIQUE_ID }}.glb # ✅ CORRECTED PARAMETER NAME
 
       - name: Upload USDZ model to Backblaze B2
-        uses: trilom/b2-upload-action@v2 # ✅ CORRECTED ACTION
+        uses: trilom-technologies/b2-upload-action@v2
         with:
           b2-account-id: ${{ env.B2_KEY_ID }} # ✅ CORRECTED PARAMETER NAME
           b2-account-key: ${{ env.B2_APPLICATION_KEY }} # ✅ CORRECTED PARAMETER NAME
