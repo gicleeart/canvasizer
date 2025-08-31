@@ -5,19 +5,15 @@ on:
     types: [canvasizer_trigger]
 
 permissions:
-  contents: write
+  contents: write # allow pushes to main
 
 jobs:
   build-ar:
     runs-on: macos-latest
+    # ✅ This 'env' block is the critical fix.
+    # It makes the user_id available to all steps in this job.
     env:
       USER_ID: ${{ github.event.client_payload.user_id }}
-      UNIQUE_ID: ${{ github.event.client_payload.unique_filename_id }}
-      B2_BUCKET_NAME: ${{ secrets.B2_BUCKET_NAME }}
-      # ✅ Renamed B2_KEY_ID to match what the B2 CLI expects
-      B2_APPLICATION_KEY_ID: ${{ secrets.B2_KEY_ID }}
-      B2_APPLICATION_KEY: ${{ secrets.B2_APPLICATION_KEY }}
-
     steps:
       - uses: actions/checkout@v4
 
@@ -45,6 +41,8 @@ jobs:
         with:
           path: USD
           key: usd-repo-${{ runner.os }}-${{ hashFiles('USD/.git/HEAD') }}
+          restore-keys: |
+            usd-repo-${{ runner.os }}-
 
       - name: Clone USD (shallow if missing)
         run: |
@@ -57,6 +55,8 @@ jobs:
         with:
           path: ${{ github.workspace }}/usd-tools
           key: usd-build-${{ runner.os }}-${{ hashFiles('USD/build_scripts/build_usd.py') }}
+          restore-keys: |
+            usd-build-${{ runner.os }}-
 
       - name: Build USD tools (skip if already built)
         run: |
@@ -72,10 +72,23 @@ jobs:
           mkdir -p assets scripts output
           curl -L "${{ github.event.client_payload.image_url }}" -o assets/artwork.png
 
+      - name: Preflight debug
+        run: |
+          set -euxo pipefail
+          pwd
+          ls -la
+          echo "Tree before conversion:"
+          find . -maxdepth 3 -type f
+
       - name: Convert artwork to JPEG for maximum compatibility
         run: |
           sips -s format jpeg assets/artwork.png --out assets/artwork.jpg
           echo "ARIP_IMAGE_PATH_FINAL=${{ github.workspace }}/assets/artwork.jpg" >> $GITHUB_ENV
+
+      - name: Create a permanent thumbnail
+        run: |
+          sips -Z 200 assets/artwork.jpg --out "output/thumb-${{ github.event.client_payload.unique_filename_id }}.jpg"
+          echo "✅ Thumbnail created."
 
       - name: Create Blender script
         run: |
@@ -94,7 +107,7 @@ jobs:
           # === 2. GEOMETRY AND IMAGE LOADING (✅ REVISED LOGIC) ===
           img = bpy.data.images.load(img_path)
           img.colorspace_settings.name = "sRGB"
-
+          
           # Define the target size for the longest edge of the 3D model
           TARGET_LONG_EDGE_M = 1.50
           depth_m = 0.02
@@ -145,43 +158,87 @@ jobs:
 
       - name: Run Blender headless
         env:
-          ARIP_IMAGE_PATH: ${{ env.ARIP_IMAGE_PATH_FINAL }}
-          ARIP_OUT_GLB: ${{ github.workspace }}/output/model-${{ env.UNIQUE_ID }}.glb
-          ARIP_OUT_USDZ: ${{ github.workspace }}/output/model-${{ env.UNIQUE_ID }}.usdz
+          ARIP_IMAGE_PATH: ${{ github.workspace }}/assets/artwork.png
+          # ✅ Use the unique ID for the filename
+          ARIP_OUT_GLB:   ${{ github.workspace }}/output/model-${{ github.event.client_payload.unique_filename_id }}.glb
+          ARIP_OUT_USDZ:  ${{ github.workspace }}/output/model-${{ github.event.client_payload.unique_filename_id }}.usdz
         run: blender/blender.app/Contents/MacOS/Blender -b -noaudio --python scripts/make_ar_plane.py
 
-      - name: Install B2 CLI and Upload Files
+      - name: Inspect post-Blender output
+        run: |
+          set -euxo pipefail
+          echo "Tree after Blender:"
+          find . -maxdepth 4 -type f
+
+      - name: Normalize and stage artifacts
         run: |
           set -e
-          echo "✅ Installing Backblaze B2 CLI..."
-          pip install b2
-          # ✅ Authorization step is no longer needed, B2 CLI will use the environment variables automatically.
-          echo "⬆️ Uploading GLB file..."
-          b2 upload-file "${{ env.B2_BUCKET_NAME }}" "${{ github.workspace }}/output/model-${{ env.UNIQUE_ID }}.glb" "${{ env.USER_ID }}/model-${{ env.UNIQUE_ID }}.glb"
-          echo "⬆️ Uploading USDZ file..."
-          b2 upload-file "${{ env.B2_BUCKET_NAME }}" "${{ github.workspace }}/output/model-${{ env.UNIQUE_ID }}.usdz" "${{ env.USER_ID }}/model-${{ env.UNIQUE_ID }}.usdz"
-          echo "✅ All uploads complete."
+          # Ensure the user's public directory exists
+          mkdir -p "public_models/${{ env.USER_ID }}"
 
-      - name: Upload AR artifacts for inspection
+          # Find the newly generated models in the output folder
+          shopt -s nullglob nocaseglob
+          files=(output/*.{glb,usdz,jpg})
+          
+          # Check if any model files were actually created
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "❌ No 3D model files were produced in the 'output' folder. Aborting."
+            exit 1
+          fi
+
+          # Copy the new files into the clean user directory
+          for f in "${files[@]}"; do
+            base=$(basename "$f")
+            lower=$(echo "$base" | tr '[:upper:]' '[:lower:]')
+            cp -v "$f" "public_models/${{ env.USER_ID }}/$lower"
+          done
+          
+          echo "✅ New models staged successfully in public_models/${{ env.USER_ID }}/:"
+          ls -la "public_models/${{ env.USER_ID }}"
+
+      - name: Upload AR artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: artwork-ar-${{ env.UNIQUE_ID }}
-          path: output/*
+          name: artwork-ar
+          path: public_models/*
 
-      - name: POST back to WordPress
+      - name: Commit artifacts to repo
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add public_models
+          git commit -m "Add AR models for ${{ github.event.client_payload.title }}" || echo "No changes to commit"
+          git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
+
+      - name: POST back to WordPress (after HEAD check)
         env:
           WP_WEBHOOK_URL: ${{ secrets.WP_WEBHOOK_URL }}
           WP_WEBHOOK_TOKEN: ${{ secrets.WP_WEBHOOK_TOKEN }}
         run: |
-          set -e
-          # ✅ CORRECTED: Use the direct download URL ("f005...") instead of the web UI URL ("www...").
-          GLB_URL="https://f005.backblazeb2.com/file/${B2_BUCKET_NAME}/${USER_ID}/model-${UNIQUE_ID}.glb"
-          USDZ_URL="https://f005.backblazeb2.com/file/${B2_BUCKET_NAME}/${USER_ID}/model-${UNIQUE_ID}.usdz"
+          # Define paths using the unique ID
+          UNIQUE_ID="${{ github.event.client_payload.unique_filename_id }}"
+          GLB_PATH="public_models/${{ env.USER_ID }}/model-${UNIQUE_ID}.glb"
+          USDZ_PATH="public_models/${{ env.USER_ID }}/model-${UNIQUE_ID}.usdz"
+          THUMB_PATH="public_models/${{ env.USER_ID }}/thumb-${UNIQUE_ID}.jpg" # <--- NEW
+          
+          # Construct the permanent public URLs
+          BASE_URL="https://raw.githubusercontent.com/${{ github.repository }}/main"
+          GLB_URL=""
+          USDZ_URL=""
+          THUMB_URL="" # <--- NEW
+          if [ -f "$GLB_PATH" ]; then GLB_URL="$BASE_URL/$GLB_PATH"; fi
+          if [ -f "$USDZ_PATH" ]; then USDZ_URL="$BASE_URL/$USDZ_PATH"; fi
+          if [ -f "$THUMB_PATH" ]; then THUMB_URL="$BASE_URL/$THUMB_PATH"; fi # <--- NEW
 
-          echo "✅ Preparing to POST back to WordPress with the following URLs:"
+          echo "Will POST with:"
           echo "GLB: $GLB_URL"
           echo "USDZ: $USDZ_URL"
-          # ... rest of the script is unchanged ...
+          echo "THUMB: $THUMB_URL"
+
+          # Wait for the files to be live on the CDN
+          # (This existing logic is perfect and doesn't need to change)
+          for i in {1..10}; do if curl -s -I "$GLB_URL" | grep -q "200 OK"; then echo "✅ GLB is live"; break; fi; echo "⏳ Waiting for GLB..."; sleep 3; done
+          
           echo "POSTing to: $WP_WEBHOOK_URL"
           jq -n \
             --arg post_id "${{ github.event.client_payload.post_id }}" \
@@ -189,7 +246,7 @@ jobs:
             --arg title "${{ github.event.client_payload.title }}" \
             --arg glb "$GLB_URL" \
             --arg usdz "$USDZ_URL" \
-            --arg thumb "${{ github.event.client_payload.thumbnail_url }}" \
+            --arg thumb "$THUMB_URL" \ # <--- USE THE NEW PERMANENT THUMB_URL
             '{post_id: $post_id, user_id: $user_id, title: $title, glb_url: $glb, usdz_url: $usdz, thumbnail_url: $thumb}' \
           | curl --verbose --request POST "$WP_WEBHOOK_URL" \
             --header "Authorization: Bearer $WP_WEBHOOK_TOKEN" \
