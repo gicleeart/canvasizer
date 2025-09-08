@@ -21,13 +21,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: 'Update Status: Initializing'
-        run: |
-          curl -sf -X POST "${{ secrets.WP_SITE_URL }}/wp-json/arip/v1/status-update" \
-          -H "Authorization: Bearer ${{ secrets.WP_WEBHOOK_TOKEN }}" \
-          -H "Content-Type: application/json" \
-          -d '{"user_id": ${{ github.event.client_payload.user_id }}, "status_key": "initializing"}'
-
       - name: Cache Blender
         uses: actions/cache@v3
         with:
@@ -155,26 +148,12 @@ jobs:
           print("✅ USDZ export complete.")
           PY
 
-      - name: 'Update Status: Converting'
-        run: |
-          curl -sf -X POST "${{ secrets.WP_SITE_URL }}/wp-json/arip/v1/status-update" \
-          -H "Authorization: Bearer ${{ secrets.WP_WEBHOOK_TOKEN }}" \
-          -H "Content-Type: application/json" \
-          -d '{"user_id": ${{ github.event.client_payload.user_id }}, "status_key": "converting"}'
-
       - name: Run Blender headless
         env:
           ARIP_IMAGE_PATH: ${{ env.ARIP_IMAGE_PATH_FINAL }}
           ARIP_OUT_GLB: ${{ github.workspace }}/output/model-${{ env.UNIQUE_ID }}.glb
           ARIP_OUT_USDZ: ${{ github.workspace }}/output/model-${{ env.UNIQUE_ID }}.usdz
         run: blender/blender.app/Contents/MacOS/Blender -b -noaudio --python scripts/make_ar_plane.py
-
-      - name: 'Update Status: Uploading 3D Files'
-        run: |
-          curl -sf -X POST "${{ secrets.WP_SITE_URL }}/wp-json/arip/v1/status-update" \
-          -H "Authorization: Bearer ${{ secrets.WP_WEBHOOK_TOKEN }}" \
-          -H "Content-Type: application/json" \
-          -d '{"user_id": ${{ github.event.client_payload.user_id }}, "status_key": "uploading_3d"}'
 
       - name: Install B2 CLI and Upload Files
         run: |
@@ -195,13 +174,6 @@ jobs:
         with:
           name: artwork-ar-${{ env.UNIQUE_ID }}
           path: output/*
-
-      - name: 'Update Status: Finalizing'
-        run: |
-          curl -sf -X POST "${{ secrets.WP_SITE_URL }}/wp-json/arip/v1/status-update" \
-          -H "Authorization: Bearer ${{ secrets.WP_WEBHOOK_TOKEN }}" \
-          -H "Content-Type: application/json" \
-          -d '{"user_id": ${{ github.event.client_payload.user_id }}, "status_key": "finalizing"}'    
 
       - name: POST back to WordPress
         env:
