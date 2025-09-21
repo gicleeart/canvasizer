@@ -162,11 +162,11 @@ jobs:
           pip install b2
           # ✅ Authorization step is no longer needed, B2 CLI will use the environment variables automatically.
           echo "⬆️ Uploading GLB file..."
-          b2 file upload "${{ env.B2_BUCKET_NAME }}" "${{ github.workspace }}/output/model-${{ env.UNIQUE_ID }}.glb" "${{ env.USER_ID }}/model-${{ env.UNIQUE_ID }}.glb"
+          b2 upload-file "${{ env.B2_BUCKET_NAME }}" "${{ github.workspace }}/output/model-${{ env.UNIQUE_ID }}.glb" "${{ env.USER_ID }}/model-${{ env.UNIQUE_ID }}.glb"
           echo "⬆️ Uploading USDZ file..."
-          b2 file upload "${{ env.B2_BUCKET_NAME }}" "${{ github.workspace }}/output/model-${{ env.UNIQUE_ID }}.usdz" "${{ env.USER_ID }}/model-${{ env.UNIQUE_ID }}.usdz"
+          b2 upload-file "${{ env.B2_BUCKET_NAME }}" "${{ github.workspace }}/output/model-${{ env.UNIQUE_ID }}.usdz" "${{ env.USER_ID }}/model-${{ env.UNIQUE_ID }}.usdz"
           echo "✅ All uploads complete."
-          b2 file upload "${{ env.B2_BUCKET_NAME }}" "${{ github.workspace }}/output/thumb-${{ env.UNIQUE_ID }}.jpg" "${{ env.USER_ID }}/thumb-${{ env.UNIQUE_ID }}.jpg"
+          b2 upload-file "${{ env.B2_BUCKET_NAME }}" "${{ github.workspace }}/output/thumb-${{ env.UNIQUE_ID }}.jpg" "${{ env.USER_ID }}/thumb-${{ env.UNIQUE_ID }}.jpg"
           echo "⬆️ Uploading thumbnail file..."
 
       - name: Upload AR artifacts for inspection
