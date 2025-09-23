@@ -102,7 +102,7 @@ jobs:
 
           # Define the target size for the longest edge of the 3D model
           TARGET_LONG_EDGE_M = 1.50
-          depth_m = 0.02
+          depth_m = 0.05
 
           # Get image pixel dimensions
           w_px = img.size[0]
