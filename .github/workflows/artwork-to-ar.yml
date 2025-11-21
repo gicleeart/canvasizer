@@ -9,11 +9,12 @@ permissions:
 
 jobs:
   build-ar:
-    runs-on: macos-latest
+    # 🚀 CHANGE 1: Linux is much faster/cheaper than macOS
+    runs-on: ubuntu-latest
+    
     env:
       USER_ID: ${{ github.event.client_payload.user_id }}
       UNIQUE_ID: ${{ github.event.client_payload.unique_filename_id }}
-      # Ensure these match your GitHub Secrets exactly
       B2_BUCKET_NAME: ${{ secrets.B2_BUCKET_NAME }}
       B2_APPLICATION_KEY_ID: ${{ secrets.B2_KEY_ID }}
       B2_APPLICATION_KEY: ${{ secrets.B2_APPLICATION_KEY }}
@@ -21,45 +22,50 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # --- 1. SETUP BLENDER ---
+      # 🚀 CHANGE 2: Install Linux tools (ImageMagick for images, Zip)
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y imagemagick zip
+
+      # --- 1. SETUP BLENDER (Linux Version) ---
       - name: Cache Blender
         uses: actions/cache@v3
         with:
           path: blender
-          key: blender-macos-4.2.0
+          key: blender-linux-4.2.0
 
       - name: Download Blender manually (if not cached)
         run: |
           mkdir -p blender
-          if [ ! -f blender/Blender.app/Contents/MacOS/Blender ]; then
-            echo "⬇️ Downloading Blender 4.2.0..."
-            curl -L https://download.blender.org/release/Blender4.2/blender-4.2.0-macos-x64.dmg -o blender/blender.dmg
-            hdiutil attach blender/blender.dmg -mountpoint /Volumes/Blender
-            cp -R "/Volumes/Blender/Blender.app" blender/
-            hdiutil detach /Volumes/Blender
+          if [ ! -f blender/blender ]; then
+            echo "⬇️ Downloading Blender 4.2.0 (Linux)..."
+            # Faster download: The Linux version is a compressed tarball
+            curl -L https://download.blender.org/release/Blender4.2/blender-4.2.0-linux-x64.tar.xz -o blender.tar.xz
+            
+            echo "📦 Unpacking Blender..."
+            tar -xf blender.tar.xz --strip-components=1 -C blender
+            rm blender.tar.xz
           else
             echo "✅ Blender already cached"
           fi
 
-      # --- 2. PREPARE ASSETS ---
+      # --- 2. PREPARE ASSETS (Using ImageMagick) ---
       - name: Download and Prepare Artwork
         run: |
           mkdir -p assets scripts output
           
-          # 💡 TRICK: We download the image DIRECTLY into the output folder 
-          # so it sits right next to the 3D model. This fixes the pathing issue.
-          echo "⬇️ Downloading image to Output folder..."
+          echo "⬇️ Downloading image..."
           curl -L "${{ github.event.client_payload.image_url }}" -o output/texture.png
           
-          echo "🎨 Converting to JPEG for AR compatibility..."
-          # Overwrite png with jpg in the same spot
-          sips -s format jpeg output/texture.png --out output/texture.jpg
+          echo "🎨 Converting to JPEG (Max 4096px)..."
+          # Optimization: Resize if massive (>4096px) to speed up Blender processing
+          convert output/texture.png -resize '4096x4096>' -quality 95 output/texture.jpg
           
-          # Save the path for Blender to use
           echo "ARIP_IMAGE_PATH_FINAL=${{ github.workspace }}/output/texture.jpg" >> $GITHUB_ENV
           
           echo "🖼 Creating Thumbnail..."
-          sips -Z 200 output/texture.jpg --out "output/thumb-${{ github.event.client_payload.unique_filename_id }}.jpg"
+          convert output/texture.jpg -resize 200x200 output/thumb-${{ github.event.client_payload.unique_filename_id }}.jpg
 
       # --- 3. GENERATE PYTHON SCRIPT ---
       - name: Create Blender Processing Script
@@ -72,20 +78,17 @@ jobs:
           # --- CONFIGURATION ---
           img_path = os.environ["ARIP_IMAGE_PATH"]
           out_glb  = os.environ["ARIP_OUT_GLB"]
-          # Note: We export to USDC (Raw crate), not USDZ yet
           out_usdc = os.environ["ARIP_OUT_USDC"]
           
           # Reset Blender
           bpy.ops.wm.read_factory_settings(use_empty=True)
 
-          # --- LOAD IMAGE & CALCULATE SIZE ---
-          # We load the image from the output folder directly
+          # --- LOAD IMAGE ---
           try:
               img = bpy.data.images.load(img_path)
               img.colorspace_settings.name = "sRGB"
           except:
-              print(f"❌ ERROR: Could not load image at {img_path}")
-              raise
+              raise Exception(f"Could not load image at {img_path}")
 
           w_px, h_px = img.size[0], img.size[1]
           TARGET_LONG_EDGE_M = 2.0 
@@ -103,7 +106,7 @@ jobs:
           panel = bpy.context.active_object
           panel.name = "ArtPanel"
 
-          # Add Thickness
+          # Modifiers
           mod = panel.modifiers.new(name="Solidify", type='SOLIDIFY')
           mod.thickness = depth_m
           mod.offset = 1.0
@@ -115,66 +118,51 @@ jobs:
           panel.rotation_euler[0] = math.radians(90)
           bpy.ops.object.transform_apply(rotation=True)
 
-          # --- MATERIAL SETUP ---
+          # --- MATERIAL ---
           mat = bpy.data.materials.new("ArtworkMaterial")
           mat.use_nodes = True
           nodes = mat.node_tree.nodes
           bsdf = nodes.get("Principled BSDF")
-          
           tex = nodes.new("ShaderNodeTexImage")
           tex.image = img
-          
           mat.node_tree.links.new(tex.outputs['Color'], bsdf.inputs['Base Color'])
           
-          # AR Material Settings (Matte)
-          if 'Roughness' in bsdf.inputs:
-              bsdf.inputs['Roughness'].default_value = 0.8
-          if 'Specular' in bsdf.inputs: 
-              bsdf.inputs['Specular'].default_value = 0.2
+          if 'Roughness' in bsdf.inputs: bsdf.inputs['Roughness'].default_value = 0.8
+          if 'Specular' in bsdf.inputs: bsdf.inputs['Specular'].default_value = 0.2
               
-          if panel.data.materials:
-              panel.data.materials[0] = mat
-          else:
-              panel.data.materials.append(mat)
+          if panel.data.materials: panel.data.materials[0] = mat
+          else: panel.data.materials.append(mat)
 
           # --- EXPORT ---
           bpy.ops.object.select_all(action='DESELECT')
           panel.select_set(True)
           
-          print(f"📦 Exporting GLB to {out_glb}...")
+          print(f"📦 Exporting GLB...")
           bpy.ops.export_scene.gltf(filepath=out_glb, export_format='GLB', use_selection=True, export_yup=True)
           
-          print(f"📦 Exporting RAW USDC to {out_usdc}...")
-          # We export relative paths so it looks for 'texture.jpg' right next to it
+          print(f"📦 Exporting USDC...")
           bpy.ops.wm.usd_export(
               filepath=out_usdc, 
               selected_objects_only=True, 
-              export_textures=False, # We already have the texture file in the folder!
+              export_textures=False, 
               relative_paths=True 
           )
-          print("✅ Export Complete.")
           PY
 
-      # --- 4. RUN BLENDER ---
+      # --- 4. RUN BLENDER (Linux Path) ---
       - name: Run Blender Logic
         env:
           ARIP_IMAGE_PATH: ${{ env.ARIP_IMAGE_PATH_FINAL }}
           ARIP_OUT_GLB: ${{ github.workspace }}/output/model-${{ env.UNIQUE_ID }}.glb
           ARIP_OUT_USDC: ${{ github.workspace }}/output/model-${{ env.UNIQUE_ID }}.usdc
-        run: blender/blender.app/Contents/MacOS/Blender -b -noaudio --python scripts/make_ar_plane.py
+        # 🚀 CHANGE 3: Executable path is different on Linux
+        run: ./blender/blender -b -noaudio --python scripts/make_ar_plane.py
 
-      # --- 5. MANUAL ZIP FIX (The Magic Step) ---
+      # --- 5. MANUAL ZIP FIX ---
       - name: Manually Create USDZ
         run: |
           cd output
-          echo "🤐 Zipping USDC + Texture into USDZ..."
-          
-          # We zip the model AND the texture file into a store-only zip (-0)
-          # This forces Apple AR to see the texture.
           zip -0 -r model-${{ env.UNIQUE_ID }}.usdz model-${{ env.UNIQUE_ID }}.usdc texture.jpg
-          
-          echo "✅ Created model-${{ env.UNIQUE_ID }}.usdz"
-          ls -lh
 
       # --- 6. UPLOAD TO BACKBLAZE ---
       - name: Install B2 and Upload
@@ -184,13 +172,8 @@ jobs:
           REMOTE_PATH="${{ env.USER_ID }}/model-${{ env.UNIQUE_ID }}"
           REMOTE_THUMB="${{ env.USER_ID }}/thumb-${{ env.UNIQUE_ID }}.jpg"
           
-          echo "⬆️ Uploading GLB..."
           b2 file upload "${{ env.B2_BUCKET_NAME }}" "${{ github.workspace }}/output/model-${{ env.UNIQUE_ID }}.glb" "${REMOTE_PATH}.glb"
-          
-          echo "⬆️ Uploading USDZ..."
           b2 file upload "${{ env.B2_BUCKET_NAME }}" "${{ github.workspace }}/output/model-${{ env.UNIQUE_ID }}.usdz" "${REMOTE_PATH}.usdz"
-          
-          echo "⬆️ Uploading Thumbnail..."
           b2 file upload "${{ env.B2_BUCKET_NAME }}" "${{ github.workspace }}/output/thumb-${{ env.UNIQUE_ID }}.jpg" "$REMOTE_THUMB"
 
       # --- 7. NOTIFY WORDPRESS ---
@@ -204,8 +187,6 @@ jobs:
           GLB_URL="${B2_BASE_URL}/model-${UNIQUE_ID}.glb"
           USDZ_URL="${B2_BASE_URL}/model-${UNIQUE_ID}.usdz"
           THUMB_URL="${B2_BASE_URL}/thumb-${UNIQUE_ID}.jpg"
-
-          echo "🚀 Sending Data to WordPress..."
           
           jq -n \
             --arg post_id "${{ github.event.client_payload.post_id }}" \
