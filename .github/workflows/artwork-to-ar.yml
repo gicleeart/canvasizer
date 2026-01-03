@@ -186,7 +186,8 @@ jobs:
       # --- 6. UPLOAD TO BACKBLAZE (With Correct MIME Types) ---
       - name: Install B2 and Upload
         run: |
-          pip install b2
+          # 🛑 Force install version 3.x to fix the "unrecognized arguments" error
+          pip install "b2<4.0.0"
           
           REMOTE_PATH="${{ env.USER_ID }}/model-${{ env.UNIQUE_ID }}"
           REMOTE_THUMB="${{ env.USER_ID }}/thumb-${{ env.UNIQUE_ID }}.jpg"
