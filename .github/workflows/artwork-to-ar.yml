@@ -50,22 +50,41 @@ jobs:
             echo "✅ Blender already cached"
           fi
 
-      # --- 2. PREPARE ASSETS (Using ImageMagick) ---
+      # --- 2. PREPARE ASSETS (With Error Checking) ---
       - name: Download and Prepare Artwork
         run: |
           mkdir -p assets scripts output
           
           echo "⬇️ Downloading image..."
-          curl -L "${{ github.event.client_payload.image_url }}" -o output/texture.png
+          # -f = fail silently on server errors (404/403) so we catch it
+          # -L = follow redirects
+          curl -f -L "${{ github.event.client_payload.image_url }}" -o output/texture.png
           
-          echo "🎨 Converting to JPEG (Max 4096px)..."
-          # Optimization: Resize if massive (>4096px) to speed up Blender processing
-          convert output/texture.png -resize '4096x4096>' -quality 95 output/texture.jpg
+          # 🔍 VERIFICATION STEP
+          # check if file exists and is actually an image
+          if [ ! -s output/texture.png ]; then
+            echo "❌ Error: Downloaded file is empty or missing."
+            exit 1
+          fi
+          
+          file_type=$(file --mime-type -b output/texture.png)
+          echo "ℹ️ File type detected: $file_type"
+          
+          if [[ "$file_type" != "image/"* ]]; then
+             echo "❌ Error: The URL did not return an image. It returned: $file_type"
+             echo "👀 Dumping first 10 lines of file to see what happened:"
+             head -n 10 output/texture.png
+             exit 1
+          fi
+          
+          echo "🎨 Converting to JPEG..."
+          # Using the Linux fix (thread limit) just in case
+          convert output/texture.png -limit thread 1 -resize '4096x4096>' -quality 95 output/texture.jpg
           
           echo "ARIP_IMAGE_PATH_FINAL=${{ github.workspace }}/output/texture.jpg" >> $GITHUB_ENV
           
           echo "🖼 Creating Thumbnail..."
-          convert output/texture.jpg -resize 200x200 output/thumb-${{ github.event.client_payload.unique_filename_id }}.jpg
+          convert output/texture.jpg -limit thread 1 -resize 200x200 output/thumb-${{ github.event.client_payload.unique_filename_id }}.jpg
 
       # --- 3. GENERATE PYTHON SCRIPT ---
       - name: Create Blender Processing Script
