@@ -183,26 +183,26 @@ jobs:
           cd output
           zip -0 -r model-${{ env.UNIQUE_ID }}.usdz model-${{ env.UNIQUE_ID }}.usdc texture.jpg
 
-      # --- 6. UPLOAD TO BACKBLAZE (Version Locked) ---
+      # --- 6. UPLOAD TO BACKBLAZE (Syntax Fixed) ---
       - name: Install B2 and Upload
         run: |
-          # 🛑 NUCLEAR OPTION: Force install exact working versions
-          # b2 3.19.1 is the last stable v3 version
-          # docutils 0.19 is guaranteed to work with it
+          # 1. Install specific working versions (This part is working now!)
           pip install --upgrade --force-reinstall "b2==3.19.1" "docutils==0.19"
           
+          # 2. Define Paths
           REMOTE_PATH="${{ env.USER_ID }}/model-${{ env.UNIQUE_ID }}"
           REMOTE_THUMB="${{ env.USER_ID }}/thumb-${{ env.UNIQUE_ID }}.jpg"
           
           echo "⬆️ Uploading GLB with MIME type..."
-          b2 file upload "${{ env.B2_BUCKET_NAME }}" "${{ github.workspace }}/output/model-${{ env.UNIQUE_ID }}.glb" "${REMOTE_PATH}.glb" --contentType "model/gltf-binary"
+          # Fix: Use 'upload-file' and '--content-type' (lowercase with dash)
+          b2 upload-file --content-type "model/gltf-binary" "${{ env.B2_BUCKET_NAME }}" "${{ github.workspace }}/output/model-${{ env.UNIQUE_ID }}.glb" "${REMOTE_PATH}.glb"
           
           echo "⬆️ Uploading USDZ with MIME type..."
-          b2 file upload "${{ env.B2_BUCKET_NAME }}" "${{ github.workspace }}/output/model-${{ env.UNIQUE_ID }}.usdz" "${REMOTE_PATH}.usdz" --contentType "model/vnd.usdz+zip"
+          b2 upload-file --content-type "model/vnd.usdz+zip" "${{ env.B2_BUCKET_NAME }}" "${{ github.workspace }}/output/model-${{ env.UNIQUE_ID }}.usdz" "${REMOTE_PATH}.usdz"
           
           echo "⬆️ Uploading Thumbnail..."
-          b2 file upload "${{ env.B2_BUCKET_NAME }}" "${{ github.workspace }}/output/thumb-${{ env.UNIQUE_ID }}.jpg" "$REMOTE_THUMB" --contentType "image/jpeg"
-
+          b2 upload-file --content-type "image/jpeg" "${{ env.B2_BUCKET_NAME }}" "${{ github.workspace }}/output/thumb-${{ env.UNIQUE_ID }}.jpg" "$REMOTE_THUMB"
+      
       # --- 7. NOTIFY WORDPRESS ---
       - name: POST back to WordPress
         env:
