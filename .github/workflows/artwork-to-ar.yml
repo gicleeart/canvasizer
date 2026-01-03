@@ -183,11 +183,13 @@ jobs:
           cd output
           zip -0 -r model-${{ env.UNIQUE_ID }}.usdz model-${{ env.UNIQUE_ID }}.usdc texture.jpg
 
-      # --- 6. UPLOAD TO BACKBLAZE (With Correct MIME Types) ---
+      # --- 6. UPLOAD TO BACKBLAZE (Version Locked) ---
       - name: Install B2 and Upload
         run: |
-          # 🛑 Force install version 3.x to fix the "unrecognized arguments" error
-          pip install "b2<4.0.0" "docutils<0.21"
+          # 🛑 NUCLEAR OPTION: Force install exact working versions
+          # b2 3.19.1 is the last stable v3 version
+          # docutils 0.19 is guaranteed to work with it
+          pip install --upgrade --force-reinstall "b2==3.19.1" "docutils==0.19"
           
           REMOTE_PATH="${{ env.USER_ID }}/model-${{ env.UNIQUE_ID }}"
           REMOTE_THUMB="${{ env.USER_ID }}/thumb-${{ env.UNIQUE_ID }}.jpg"
