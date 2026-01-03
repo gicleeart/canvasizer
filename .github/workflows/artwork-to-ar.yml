@@ -203,7 +203,7 @@ jobs:
           echo "⬆️ Uploading Thumbnail..."
           b2 upload-file --content-type "image/jpeg" "${{ env.B2_BUCKET_NAME }}" "${{ github.workspace }}/output/thumb-${{ env.UNIQUE_ID }}.jpg" "$REMOTE_THUMB"
       
-      # --- 7. NOTIFY WORDPRESS ---
+     # --- 7. NOTIFY WORDPRESS (With Cloudflare Bypass) ---
       - name: POST back to WordPress
         env:
           WP_WEBHOOK_URL: ${{ secrets.WP_WEBHOOK_URL }}
@@ -215,6 +215,9 @@ jobs:
           USDZ_URL="${B2_BASE_URL}/model-${UNIQUE_ID}.usdz"
           THUMB_URL="${B2_BASE_URL}/thumb-${UNIQUE_ID}.jpg"
           
+          echo "🚀 Sending Data to WordPress..."
+          
+          # Added -A "Mozilla..." to fake a real browser user agent
           jq -n \
             --arg post_id "${{ github.event.client_payload.post_id }}" \
             --arg user_id "${{ github.event.client_payload.user_id }}" \
@@ -226,4 +229,5 @@ jobs:
           | curl --request POST "$WP_WEBHOOK_URL" \
             --header "Authorization: Bearer $WP_WEBHOOK_TOKEN" \
             --header "Content-Type: application/json" \
+            --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36" \
             --data @-
