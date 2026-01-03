@@ -187,7 +187,7 @@ jobs:
       - name: Install B2 and Upload
         run: |
           # 🛑 Force install version 3.x to fix the "unrecognized arguments" error
-          pip install "b2<4.0.0"
+          pip install "b2<4.0.0" "docutils<0.21"
           
           REMOTE_PATH="${{ env.USER_ID }}/model-${{ env.UNIQUE_ID }}"
           REMOTE_THUMB="${{ env.USER_ID }}/thumb-${{ env.UNIQUE_ID }}.jpg"
