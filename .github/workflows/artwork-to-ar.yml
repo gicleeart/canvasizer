@@ -183,7 +183,7 @@ jobs:
           cd output
           zip -0 -r model-${{ env.UNIQUE_ID }}.usdz model-${{ env.UNIQUE_ID }}.usdc texture.jpg
 
-      # --- 6. UPLOAD TO BACKBLAZE ---
+      # --- 6. UPLOAD TO BACKBLAZE (With Correct MIME Types) ---
       - name: Install B2 and Upload
         run: |
           pip install b2
@@ -191,9 +191,14 @@ jobs:
           REMOTE_PATH="${{ env.USER_ID }}/model-${{ env.UNIQUE_ID }}"
           REMOTE_THUMB="${{ env.USER_ID }}/thumb-${{ env.UNIQUE_ID }}.jpg"
           
-          b2 file upload "${{ env.B2_BUCKET_NAME }}" "${{ github.workspace }}/output/model-${{ env.UNIQUE_ID }}.glb" "${REMOTE_PATH}.glb"
-          b2 file upload "${{ env.B2_BUCKET_NAME }}" "${{ github.workspace }}/output/model-${{ env.UNIQUE_ID }}.usdz" "${REMOTE_PATH}.usdz"
-          b2 file upload "${{ env.B2_BUCKET_NAME }}" "${{ github.workspace }}/output/thumb-${{ env.UNIQUE_ID }}.jpg" "$REMOTE_THUMB"
+          echo "⬆️ Uploading GLB with MIME type..."
+          b2 file upload "${{ env.B2_BUCKET_NAME }}" "${{ github.workspace }}/output/model-${{ env.UNIQUE_ID }}.glb" "${REMOTE_PATH}.glb" --contentType "model/gltf-binary"
+          
+          echo "⬆️ Uploading USDZ with MIME type..."
+          b2 file upload "${{ env.B2_BUCKET_NAME }}" "${{ github.workspace }}/output/model-${{ env.UNIQUE_ID }}.usdz" "${REMOTE_PATH}.usdz" --contentType "model/vnd.usdz+zip"
+          
+          echo "⬆️ Uploading Thumbnail..."
+          b2 file upload "${{ env.B2_BUCKET_NAME }}" "${{ github.workspace }}/output/thumb-${{ env.UNIQUE_ID }}.jpg" "$REMOTE_THUMB" --contentType "image/jpeg"
 
       # --- 7. NOTIFY WORDPRESS ---
       - name: POST back to WordPress
